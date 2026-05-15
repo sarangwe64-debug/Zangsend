@@ -111,12 +111,10 @@ export function SettingsPage() {
     try {
       localStorage.setItem('apify_primary', primaryKey.trim());
       localStorage.setItem('apify_fallback', fallbackKey.trim());
-      // Try to hot-update the local server
-      await fetch('http://127.0.0.1:54321/update-apify-keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ primary: primaryKey.trim(), fallback: fallbackKey.trim() })
-      }).catch(() => {}); // ignore if server not running
+      // Try to hot-update the local server or edge function
+      await supabase.functions.invoke('update-apify-keys', {
+        body: { primary: primaryKey.trim(), fallback: fallbackKey.trim() }
+      }).catch(() => {}); // ignore if server/function not responding
       setSaveResult('success');
     } catch {
       setSaveResult('error');

@@ -9,7 +9,7 @@ import { distributeEmails } from '../utils/scheduler';
 
 export function ListDetailPage() {
   const { id } = useParams();
-  const { contacts, loading, totalCount, currentPage, pageSize, goToPage, updateContactsStatus, insertContacts, updateContactLocally, bulkUpdateContactsLocally } = useContacts(id);
+  const { contacts, loading, totalCount, currentPage, pageSize, goToPage, insertContacts, updateContactLocally, bulkUpdateContactsLocally } = useContacts(id);
   const { templates } = useTemplates();
   const [selectedRows, setSelectedRows] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -31,7 +31,7 @@ export function ListDetailPage() {
   const [massEditAttachmentId, setMassEditAttachmentId] = useState('');
   
   // Scheduling State
-  const [workingHours, setWorkingHours] = useState(() => {
+  const [workingHours] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('zangsend_working_hours') || '{"start":"09:00","end":"18:00"}');
     } catch {
@@ -46,7 +46,7 @@ export function ListDetailPage() {
     
     const fetchSenders = async () => {
       try {
-        const { data, error } = await supabase.from('senders').select('*');
+        const { data } = await supabase.from('senders').select('*');
         if (data) {
           setSenders(data);
           if (data.length > 0) setSelectedSenderId(data[0].id);
@@ -239,14 +239,11 @@ export function ListDetailPage() {
       setProcessingEmails(prev => new Set(prev).add(contact.id));
 
       try {
-        const res = await fetch('http://localhost:54321/functions/v1/find-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: contact.linkedin_url })
+        const { data, error } = await supabase.functions.invoke('find-email', {
+          body: { url: contact.linkedin_url }
         });
 
-        if (res.ok) {
-          const data = await res.json();
+        if (!error) {
           if (data && data.email) {
             await supabase.from('contacts').update({ email: data.email, status: 'email_found' }).eq('id', contact.id);
             updateContactLocally(contact.id, { email: data.email, status: 'email_found' });
@@ -355,10 +352,8 @@ export function ListDetailPage() {
         }
 
         // 3. Send via local server
-        const res = await fetch('http://localhost:54321/functions/v1/send-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const { data: resData, error: resError } = await supabase.functions.invoke('send-email', {
+          body: {
             to: contact.email,
             subject: subject,
             html: html,
@@ -366,19 +361,18 @@ export function ListDetailPage() {
             app_password: sender.app_password,
             sender_name: "Krishn Veer",
             attachment: attachmentConfig
-          })
+          }
         });
 
-        if (res.ok) {
+        if (!resError) {
           await supabase.from('contacts').update({ 
             status: 'sent', 
             sent_at: new Date().toISOString() 
           }).eq('id', contact.id);
           updateContactLocally(contact.id, { status: 'sent', sent_at: new Date().toISOString() });
         } else {
-          const errData = await res.json();
-          console.error('Failed to send email:', errData.error);
-          alert(`Failed to send to ${contact.email}: ${errData.error}`);
+          console.error('Failed to send email:', resError.message);
+          alert(`Failed to send to ${contact.email}: ${resError.message}`);
         }
       } catch (err: any) {
         console.error('Error in send campaign:', err);

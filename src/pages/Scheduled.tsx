@@ -93,6 +93,7 @@ export function ScheduledPage() {
     }
   };
 
+  /*
   const handleUpdateStatus = async (newStatus: 'draft' | 'scheduled') => {
     if (selectedRows.length === 0) return;
     try {
@@ -118,6 +119,7 @@ export function ScheduledPage() {
       alert('Failed to update status: ' + err.message);
     }
   };
+  */
 
   const handleUnschedule = async () => {
     if (selectedRows.length === 0) return;

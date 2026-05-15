@@ -1,0 +1,17 @@
+name: Process Email Queue
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Run every 5 minutes
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  process-queue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Process Queue Function
+        run: |
+          curl -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/process-queue" \
+          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{}'

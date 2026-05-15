@@ -48,22 +48,19 @@ export function useQueueProcessor() {
                      .replace(/{{last_name}}/g, email.last_name || '')
                      .replace(/{{company}}/g, email.company_name || '');
 
-          // Send via local_server
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:54321';
-          const res = await fetch(`${apiUrl}/functions/v1/send-email`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          // Send via Supabase function
+          const { error: resError } = await supabase.functions.invoke('send-email', {
+            body: {
               to: email.email,
               subject,
               html: body,
               from_email: sender.email,
               app_password: sender.app_password,
               sender_name: sender.name || 'Sender',
-            })
+            }
           });
 
-          if (res.ok) {
+          if (!resError) {
             await supabase.from('contacts').update({ 
               status: 'sent', 
               sent_at: new Date().toISOString() 
@@ -71,7 +68,7 @@ export function useQueueProcessor() {
             console.log(`[Queue] Successfully sent email to ${email.email}`);
           } else {
             await supabase.from('contacts').update({ status: 'bounced' }).eq('id', email.id);
-            console.error(`[Queue] Failed to send email to ${email.email}`);
+            console.error(`[Queue] Failed to send email to ${email.email}:`, resError.message);
           }
         }
       } catch (err) {

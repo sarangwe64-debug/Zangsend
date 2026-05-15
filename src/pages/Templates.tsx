@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Bold, Italic, List, ListOrdered, Link as LinkIcon, Plus, Save, Search, CheckCircle, Loader2, Paperclip } from 'lucide-react';
+import { Bold, Italic, List, ListOrdered, Link as LinkIcon, Plus, Save, Search, CheckCircle, Loader2 } from 'lucide-react';
 import { useTemplates, type Template } from '../hooks/useTemplates';
-import { supabase } from '../lib/supabase';
+// import { supabase } from '../lib/supabase';
 
 export function TemplatesPage() {
   const { templates, loading, saveTemplate } = useTemplates();
@@ -16,13 +16,15 @@ export function TemplatesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
-  const [availableAttachments, setAvailableAttachments] = useState<{id: string, filename: string}[]>([]);
+  // const [availableAttachments, setAvailableAttachments] = useState<{id: string, filename: string}[]>([]);
   
+  /*
   useEffect(() => {
     supabase.from('attachments').select('id, filename').then(({ data }) => {
       if (data) setAvailableAttachments(data);
     });
   }, []);
+  */
   
   const editor = useEditor({
     extensions: [
