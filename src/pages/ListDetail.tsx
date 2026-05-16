@@ -515,7 +515,7 @@ export function ListDetailPage() {
               html: html,
               from_email: sender.email,
               app_password: sender.app_password,
-              sender_name: sender.name || "ZangSends",
+              sender_name: sender.display_name || sender.email?.split('@')[0] || 'ZangSends',
               attachment_url: attachmentUrl,
               attachment_filename: attachmentFilename
             }
