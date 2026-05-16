@@ -6,6 +6,7 @@ import { useContacts } from '../hooks/useContacts';
 import { useTemplates } from '../hooks/useTemplates';
 import { supabase } from '../lib/supabase';
 import { distributeEmails } from '../utils/scheduler';
+import { getApifyTokens, hasApifyTokens } from '../lib/apify';
 
 export function ListDetailPage() {
   const { id } = useParams();
@@ -208,54 +209,93 @@ export function ListDetailPage() {
     stopFindingRef.current = true;
   };
 
+  const applyFindEmailResult = async (
+    contact: { id: string; data?: Record<string, unknown> },
+    data: {
+      email?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      company_name?: string | null;
+      title?: string | null;
+    }
+  ) => {
+    const patch = {
+      email: data.email || null,
+      first_name: data.first_name || undefined,
+      last_name: data.last_name || undefined,
+      company_name: data.company_name || undefined,
+      title: data.title || undefined,
+      status: data.email ? 'email_found' : 'email_not_found',
+      data: {
+        ...(contact.data || {}),
+        email: data.email || null,
+        first_name: data.first_name,
+        last_name: data.last_name,
+        company_name: data.company_name,
+        title: data.title,
+      },
+    };
+    await supabase.from('contacts').update(patch).eq('id', contact.id);
+    updateContactLocally(contact.id, patch);
+  };
+
   const handleFindEmails = async () => {
     if (selectedRows.length === 0) return;
-
-    // Reset stop flag and start
-    stopFindingRef.current = false;
-    setFindingEmails(true);
-
-    const selectedContacts = contacts.filter(
-      c => selectedRows.includes(c.id)
-    );
-
-    const withUrl = selectedContacts.filter(c => c.linkedin_url);
-    const withoutUrl = selectedContacts.filter(c => !c.linkedin_url);
-
-    if (withoutUrl.length > 0 && withUrl.length === 0) {
-      alert(`⚠️ ${withoutUrl.length} contacts skipped: They are missing LinkedIn URLs.`);
-      setFindingEmails(false);
+    if (!hasApifyTokens()) {
+      alert('Add your Apify API key in Settings → Apify Keys, then click Save Keys.');
       return;
     }
 
-    // Process with concurrency of 3
+    stopFindingRef.current = false;
+    setFindingEmails(true);
+
+    const tokens = getApifyTokens();
+    const selectedContacts = contacts.filter((c) => selectedRows.includes(c.id));
+    const withUrl = selectedContacts.filter((c) => c.linkedin_url?.trim());
+    const withoutUrl = selectedContacts.filter((c) => !c.linkedin_url?.trim());
+
+    if (withoutUrl.length > 0 && withUrl.length === 0) {
+      alert(`${withoutUrl.length} contact(s) skipped: missing LinkedIn URL.`);
+      setFindingEmails(false);
+      return;
+    }
+    if (withoutUrl.length > 0) {
+      alert(`${withoutUrl.length} contact(s) skipped (no LinkedIn URL). Finding emails for ${withUrl.length}.`);
+    }
+
     const queue = [...withUrl];
     const concurrency = 3;
-    
+    let found = 0;
+    let failed = 0;
+    let errors = 0;
+
     const processNext = async () => {
       if (queue.length === 0 || stopFindingRef.current) return;
       const contact = queue.shift()!;
-      
-      setProcessingEmails(prev => new Set(prev).add(contact.id));
+
+      setProcessingEmails((prev) => new Set(prev).add(contact.id));
 
       try {
         const { data, error } = await supabase.functions.invoke('find-email', {
-          body: { url: contact.linkedin_url }
+          body: { url: contact.linkedin_url, tokens, mode: 'email_only' },
         });
 
-        if (!error) {
-          if (data && data.email) {
-            await supabase.from('contacts').update({ email: data.email, status: 'email_found' }).eq('id', contact.id);
-            updateContactLocally(contact.id, { email: data.email, status: 'email_found' });
-          } else {
-            await supabase.from('contacts').update({ status: 'email_not_found' }).eq('id', contact.id);
-            updateContactLocally(contact.id, { status: 'email_not_found' });
-          }
+        if (error) {
+          errors++;
+          console.error('find-email error:', error.message);
+        } else if (data?.error) {
+          errors++;
+          console.error('find-email:', data.error);
+        } else if (data) {
+          await applyFindEmailResult(contact, data);
+          if (data.email) found++;
+          else failed++;
         }
-      } catch (err: any) {
-        console.error(`Network error:`, err.message);
+      } catch (err: unknown) {
+        errors++;
+        console.error('Network error:', err instanceof Error ? err.message : err);
       } finally {
-        setProcessingEmails(prev => {
+        setProcessingEmails((prev) => {
           const next = new Set(prev);
           next.delete(contact.id);
           return next;
@@ -264,12 +304,19 @@ export function ListDetailPage() {
       }
     };
 
-    // Start workers
-    await Promise.all(Array(Math.min(concurrency, queue.length)).fill(null).map(processNext));
+    await Promise.all(
+      Array(Math.min(concurrency, queue.length))
+        .fill(null)
+        .map(() => processNext())
+    );
 
     setFindingEmails(false);
     stopFindingRef.current = false;
     setSelectedRows([]);
+
+    const parts = [`Found: ${found}`, `Not found: ${failed}`];
+    if (errors) parts.push(`Errors: ${errors}`);
+    alert(`Email lookup finished.\n${parts.join('\n')}`);
   };
 
   const handleSendCampaign = async () => {
@@ -514,25 +561,34 @@ export function ListDetailPage() {
 
   const handleAutofill = async () => {
     if (!newContact.linkedin_url) return;
+    if (!hasApifyTokens()) {
+      alert('Add your Apify API key in Settings → Apify Keys first.');
+      return;
+    }
     setIsAutofilling(true);
     try {
-      const { data } = await supabase.functions.invoke('find-email', {
-        body: { url: newContact.linkedin_url }
+      const { data, error } = await supabase.functions.invoke('find-email', {
+        body: { url: newContact.linkedin_url, tokens: getApifyTokens(), mode: 'full' },
       });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
       if (!data) throw new Error('No data returned');
-      if (data) {
-        setNewContact(prev => ({
-          ...prev,
-          first_name: data.first_name || prev.first_name,
-          last_name: data.last_name || prev.last_name,
-          company_name: data.company_name || prev.company_name,
-          title: data.title || prev.title,
-          email: data.email || prev.email,
-        }));
+      setNewContact((prev) => ({
+        ...prev,
+        first_name: data.first_name || prev.first_name,
+        last_name: data.last_name || prev.last_name,
+        company_name: data.company_name || prev.company_name,
+        title: data.title || prev.title,
+        email: data.email || prev.email,
+      }));
+      if (!data.email) {
+        alert('Profile loaded but no email was found for this LinkedIn URL.');
       }
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Autofill error:', err);
-      alert('Failed to autofill from LinkedIn.');
+      alert(
+        `Failed to autofill: ${err instanceof Error ? err.message : 'Unknown error'}`
+      );
     } finally {
       setIsAutofilling(false);
     }

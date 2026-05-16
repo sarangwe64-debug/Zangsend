@@ -21,7 +21,7 @@ jobs:
       - name: Deploy Functions
         run: |
           REF="${{ secrets.SUPABASE_PROJECT_ID }}"
-          supabase functions deploy find-email --project-ref "$REF"
+          supabase functions deploy find-email --project-ref "$REF" --no-verify-jwt
           supabase functions deploy send-email --project-ref "$REF"
           supabase functions deploy create-draft --project-ref "$REF"
           supabase functions deploy process-queue --project-ref "$REF" --no-verify-jwt

@@ -56,11 +56,12 @@ export function useContacts(listId?: string) {
 
       const formattedData = (data || []).map(c => ({
         ...c,
-        first_name: c.data?.first_name || null,
-        last_name: c.data?.last_name || null,
-        company_name: c.data?.company_name || null,
-        title: c.data?.title || null,
-        linkedin_url: c.data?.linkedin_url || null,
+        first_name: c.first_name || c.data?.first_name || null,
+        last_name: c.last_name || c.data?.last_name || null,
+        company_name: c.company_name || c.data?.company_name || null,
+        title: c.title || c.data?.title || null,
+        email: c.email || c.data?.email || null,
+        linkedin_url: c.linkedin_url || c.data?.linkedin_url || null,
       }));
 
       setContacts(formattedData as any);

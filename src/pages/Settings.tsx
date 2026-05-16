@@ -53,11 +53,36 @@ export function SettingsPage() {
     }
   }, []);
 
+  const loadApifyKeys = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('apify_keys')
+        .select('label, api_key_encrypted')
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+      if (error) {
+        console.warn('apify_keys not available:', error.message);
+        return;
+      }
+      const primary = data?.find((k) => k.label === 'primary');
+      const fallback = data?.find((k) => k.label === 'fallback');
+      if (primary?.api_key_encrypted) setPrimaryKey(primary.api_key_encrypted);
+      if (fallback?.api_key_encrypted) setFallbackKey(fallback.api_key_encrypted);
+    } catch (err) {
+      console.warn('Failed to load Apify keys:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'sender') {
       fetchSenders();
     }
-  }, [activeTab, fetchSenders]);
+    if (activeTab === 'apify') {
+      loadApifyKeys();
+    }
+  }, [activeTab, fetchSenders, loadApifyKeys]);
 
   const handleAddSender = async () => {
     if (!newSender.email || !newSender.app_password) return;
@@ -106,11 +131,41 @@ export function SettingsPage() {
   };
 
   const handleSaveKeys = async () => {
+    if (!primaryKey.trim()) {
+      alert('Primary Apify key is required.');
+      return;
+    }
     setSaving(true);
     setSaveResult(null);
     try {
       localStorage.setItem('apify_primary', primaryKey.trim());
       localStorage.setItem('apify_fallback', fallbackKey.trim());
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('apify_keys').delete().eq('user_id', user.id);
+        const rows = [
+          {
+            user_id: user.id,
+            label: 'primary',
+            api_key_encrypted: primaryKey.trim(),
+            is_active: true,
+          },
+        ];
+        if (fallbackKey.trim()) {
+          rows.push({
+            user_id: user.id,
+            label: 'fallback',
+            api_key_encrypted: fallbackKey.trim(),
+            is_active: true,
+          });
+        }
+        const { error } = await supabase.from('apify_keys').insert(rows);
+        if (error) {
+          console.warn('Could not save keys to database:', error.message);
+        }
+      }
+
       setSaveResult('success');
     } catch {
       setSaveResult('error');
@@ -251,7 +306,7 @@ export function SettingsPage() {
                   </button>
                   {saveResult === 'success' && (
                     <span className="flex items-center gap-1.5 text-sm text-green-400">
-                      <CheckCircle className="w-4 h-4" /> Saved! Restart server to apply.
+                      <CheckCircle className="w-4 h-4" /> Saved — Find Emails will use these keys.
                     </span>
                   )}
                   {saveResult === 'error' && (
@@ -264,11 +319,10 @@ export function SettingsPage() {
 
               <div className="p-4 bg-elevated border border-border rounded-lg text-xs text-text-secondary space-y-1.5">
                 <p className="font-medium text-text-primary mb-2">How email finding works</p>
-                <p>Production uses keys set via <code className="font-mono bg-background px-1 rounded">supabase secrets set APIFY_TOKEN=...</code>. Local dev uses keys saved here + <code className="font-mono bg-background px-1 rounded">npm run dev</code>.</p>
-                <p>1. Your <strong>local server</strong> receives requests from the browser when running in dev mode.</p>
-                <p>2. It uses a <strong>waterfall of 5 actors</strong> to find the email, starting with <strong>anchor/linkedin-to-email</strong> (fastest, ~5 seconds).</p>
-                <p>3. If the first fails, it automatically tries <strong>apimaestro</strong>, <strong>vulnv</strong>, <strong>snipercoder</strong>, and <strong>code_crafter</strong>.</p>
-                <p>4. The free Apify plan gives $5/month ≈ 500–1000 email lookups.</p>
+                <p>Save your keys here — they are stored in your account and sent securely to the email-finder service.</p>
+                <p>Uses a <strong>waterfall of Apify actors</strong> (anchor, snipercoder, vulnv, and more) until an email is found.</p>
+                <p>Optional fallback key is used automatically if the primary hits quota.</p>
+                <p>Free Apify plan: about $5/month credit (~500–1000 lookups).</p>
               </div>
             </div>
           )}
