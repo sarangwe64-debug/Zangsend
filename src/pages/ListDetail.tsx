@@ -6,7 +6,7 @@ import { useContacts } from '../hooks/useContacts';
 import { useTemplates } from '../hooks/useTemplates';
 import { supabase } from '../lib/supabase';
 import { distributeEmails } from '../utils/scheduler';
-import { getApifyTokens, hasApifyTokens } from '../lib/apify';
+import { invokeFindEmail, hasApifyTokens } from '../lib/apify';
 
 export function ListDetailPage() {
   const { id } = useParams();
@@ -241,15 +241,13 @@ export function ListDetailPage() {
 
   const handleFindEmails = async () => {
     if (selectedRows.length === 0) return;
-    if (!hasApifyTokens()) {
+    if (!(await hasApifyTokens())) {
       alert('Add your Apify API key in Settings → Apify Keys, then click Save Keys.');
       return;
     }
 
     stopFindingRef.current = false;
     setFindingEmails(true);
-
-    const tokens = getApifyTokens();
     const selectedContacts = contacts.filter((c) => selectedRows.includes(c.id));
     const withUrl = selectedContacts.filter((c) => c.linkedin_url?.trim());
     const withoutUrl = selectedContacts.filter((c) => !c.linkedin_url?.trim());
@@ -276,21 +274,13 @@ export function ListDetailPage() {
       setProcessingEmails((prev) => new Set(prev).add(contact.id));
 
       try {
-        const { data, error } = await supabase.functions.invoke('find-email', {
-          body: { url: contact.linkedin_url, tokens, mode: 'email_only' },
+        const data = await invokeFindEmail({
+          url: contact.linkedin_url!,
+          mode: 'email_only',
         });
-
-        if (error) {
-          errors++;
-          console.error('find-email error:', error.message);
-        } else if (data?.error) {
-          errors++;
-          console.error('find-email:', data.error);
-        } else if (data) {
-          await applyFindEmailResult(contact, data);
-          if (data.email) found++;
-          else failed++;
-        }
+        await applyFindEmailResult(contact, data);
+        if (data.email) found++;
+        else failed++;
       } catch (err: unknown) {
         errors++;
         console.error('Network error:', err instanceof Error ? err.message : err);
@@ -560,19 +550,20 @@ export function ListDetailPage() {
   };
 
   const handleAutofill = async () => {
-    if (!newContact.linkedin_url) return;
-    if (!hasApifyTokens()) {
-      alert('Add your Apify API key in Settings → Apify Keys first.');
+    if (!newContact.linkedin_url?.trim()) {
+      alert('Paste a LinkedIn profile URL first.');
+      return;
+    }
+    if (!(await hasApifyTokens())) {
+      alert('Add your Apify API key in Settings → Apify Keys, then click Save Keys.');
       return;
     }
     setIsAutofilling(true);
     try {
-      const { data, error } = await supabase.functions.invoke('find-email', {
-        body: { url: newContact.linkedin_url, tokens: getApifyTokens(), mode: 'full' },
+      const data = await invokeFindEmail({
+        url: newContact.linkedin_url.trim(),
+        mode: 'full',
       });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      if (!data) throw new Error('No data returned');
       setNewContact((prev) => ({
         ...prev,
         first_name: data.first_name || prev.first_name,
@@ -581,14 +572,15 @@ export function ListDetailPage() {
         title: data.title || prev.title,
         email: data.email || prev.email,
       }));
-      if (!data.email) {
-        alert('Profile loaded but no email was found for this LinkedIn URL.');
+      const filled = [data.first_name, data.last_name, data.email].filter(Boolean).length;
+      if (!data.email && filled === 0) {
+        alert('Apify could not find profile or email for this URL. Try another profile or check your Apify credits.');
+      } else if (!data.email) {
+        alert('Name and title filled via Apify. No email found for this profile.');
       }
     } catch (err: unknown) {
       console.error('Autofill error:', err);
-      alert(
-        `Failed to autofill: ${err instanceof Error ? err.message : 'Unknown error'}`
-      );
+      alert(`Autofill failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsAutofilling(false);
     }
@@ -1050,8 +1042,21 @@ export function ListDetailPage() {
                     value={newContact.linkedin_url}
                     onChange={e => setNewContact({...newContact, linkedin_url: e.target.value})}
                   />
-                  <button onClick={handleAutofill} disabled={isAutofilling} className="btn btn-secondary whitespace-nowrap text-xs px-3">
-                    {isAutofilling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Autofill'}
+                  <button
+                    type="button"
+                    onClick={handleAutofill}
+                    disabled={isAutofilling}
+                    title="Uses Apify to fill name, company, title, and email from LinkedIn"
+                    className="btn btn-secondary whitespace-nowrap text-xs px-3 min-w-[88px]"
+                  >
+                    {isAutofilling ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" />
+                        Apify…
+                      </>
+                    ) : (
+                      'Autofill'
+                    )}
                   </button>
                 </div>
               </div>

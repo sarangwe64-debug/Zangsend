@@ -6,6 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const POLL_MS = 2500;
+const MAX_POLL = 14; // ~35s per actor — stay under Supabase ~60s function limit
+
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
 function extractEmail(items: unknown): string | null {
@@ -34,30 +37,14 @@ function extractEmail(items: unknown): string | null {
 
 type ActorStep = { id: string; input: (url: string) => Record<string, unknown> };
 
-const catchAll = (url: string) => ({
-  urls: [url],
-  profileUrls: [url],
-  linkedinUrls: [url],
-  startUrls: [{ url }],
-  linkedin: url,
-  linkedin_profile_url: url,
-  url,
-  includeEmail: true,
-  extractEmail: true,
-  findEmail: true,
-});
-
-const EMAIL_ACTORS: ActorStep[] = [
+const QUICK_EMAIL_ACTORS: ActorStep[] = [
   { id: 'anchor~linkedin-to-email', input: (url) => ({ startUrls: [{ url }] }) },
-  { id: 'anchor~linkedin-to-email', input: (url) => ({ url }) },
   { id: 'snipercoder~linkedin-email-finder', input: (url) => ({ linkedin: url }) },
   { id: 'vulnv~linkedin-email-finder', input: (url) => ({ urls: [url] }) },
   { id: 'blitzapi~linkedin-email-finder', input: (url) => ({ linkedin_profile_url: url }) },
-  { id: 'easyapi~linkedin-email-scraper', input: (url) => ({ startUrls: [{ url }] }) },
-  { id: 'iron-crawler~linkedin-email-finder', input: catchAll },
-  { id: 'dev_fusion~linkedin-profile-scraper', input: (url) => ({ profileUrls: [url] }) },
-  { id: 'apimaestro~linkedin-profile-detail', input: (url) => ({ urls: [url] }) },
 ];
+
+const PROFILE_ACTOR = 'apimaestro~linkedin-profile-detail';
 
 async function startRun(actorId: string, input: Record<string, unknown>, token: string) {
   const res = await fetch(`https://api.apify.com/v2/acts/${actorId}/runs`, {
@@ -72,15 +59,15 @@ async function startRun(actorId: string, input: Record<string, unknown>, token: 
       res.status === 429 ||
       raw.includes('quota') ||
       raw.includes('limit');
-    return { error: quota ? 'quota' : raw.slice(0, 120) };
+    return { error: quota ? 'quota' as const : raw.slice(0, 120) };
   }
   const d = JSON.parse(raw).data;
   return { runId: d.id as string, datasetId: d.defaultDatasetId as string };
 }
 
 async function pollRun(runId: string, token: string) {
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
+  for (let i = 0; i < MAX_POLL; i++) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
     const s = await (
       await fetch(`https://api.apify.com/v2/actor-runs/${runId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -126,48 +113,72 @@ function extractProfile(items: unknown[]) {
   return result;
 }
 
-async function findEmailWaterfall(url: string, tokens: string[]) {
-  let tokenIndex = 0;
+async function runActor(
+  actorId: string,
+  input: Record<string, unknown>,
+  tokens: string[],
+  startTokenIndex = 0
+) {
+  let tokenIndex = startTokenIndex;
   const getToken = () => tokens[tokenIndex % tokens.length];
   const rotate = () => {
     tokenIndex = (tokenIndex + 1) % tokens.length;
   };
 
-  for (const actor of EMAIL_ACTORS) {
-    let token = getToken();
-    let started = await startRun(actor.id, actor.input(url), token);
-
-    if (started.error === 'quota' && tokens.length > 1) {
-      rotate();
-      token = getToken();
-      started = await startRun(actor.id, actor.input(url), token);
-    }
-
-    const { runId, datasetId, error } = started;
-    if (error || !runId || !datasetId) continue;
-
-    const ok = await pollRun(runId, token);
-    if (!ok) continue;
-
-    const items = await fetchDataset(datasetId, token);
-    const email = extractEmail(items);
-    if (email) return { email, profile: extractProfile(Array.isArray(items) ? items : []) };
+  let started = await startRun(actorId, input, getToken());
+  if (started.error === 'quota' && tokens.length > 1) {
+    rotate();
+    started = await startRun(actorId, input, getToken());
+  }
+  if (started.error || !started.runId || !started.datasetId) {
+    return { items: null, tokenIndex };
   }
 
-  return { email: null, profile: extractProfile([]) };
+  const ok = await pollRun(started.runId, getToken());
+  if (!ok) return { items: null, tokenIndex };
+
+  const items = await fetchDataset(started.datasetId, getToken());
+  return { items: Array.isArray(items) ? items : [], tokenIndex };
 }
 
-async function resolveTokens(
-  req: Request,
-  clientTokens?: string[]
-): Promise<string[]> {
+async function findEmailWaterfall(url: string, tokens: string[]) {
+  let tokenIndex = 0;
+  let profile = extractProfile([]);
+
+  for (const actor of QUICK_EMAIL_ACTORS) {
+    const { items, tokenIndex: next } = await runActor(
+      actor.id,
+      actor.input(url),
+      tokens,
+      tokenIndex
+    );
+    tokenIndex = next;
+    if (!items) continue;
+
+    const p = extractProfile(items);
+    if (p.first_name) profile = { ...profile, ...p };
+
+    const email = extractEmail(items);
+    if (email) return { email, profile };
+  }
+
+  return { email: null, profile };
+}
+
+async function fetchProfile(url: string, tokens: string[]) {
+  const { items } = await runActor(PROFILE_ACTOR, { urls: [url] }, tokens, 0);
+  if (!items?.length) return extractProfile([]);
+  return extractProfile(items);
+}
+
+async function resolveTokens(req: Request, clientTokens?: string[]): Promise<string[]> {
   const fromEnv = [Deno.env.get('APIFY_TOKEN'), Deno.env.get('APIFY_TOKEN2')].filter(
     (t): t is string => Boolean(t)
   );
   const fromClient = (clientTokens || []).filter(Boolean);
+  const dbTokens: string[] = [];
 
   const authHeader = req.headers.get('Authorization');
-  const dbTokens: string[] = [];
   if (authHeader?.startsWith('Bearer ')) {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -180,8 +191,7 @@ async function resolveTokens(
           .from('apify_keys')
           .select('api_key_encrypted, label')
           .eq('user_id', user.id)
-          .eq('is_active', true)
-          .order('label');
+          .eq('is_active', true);
         if (keys?.length) {
           const order = ['primary', 'fallback'];
           const sorted = [...keys].sort(
@@ -193,8 +203,7 @@ async function resolveTokens(
     }
   }
 
-  const merged = [...new Set([...fromClient, ...dbTokens, ...fromEnv])];
-  return merged;
+  return [...new Set([...fromClient, ...dbTokens, ...fromEnv])];
 }
 
 serve(async (req) => {
@@ -210,36 +219,48 @@ serve(async (req) => {
     const tokens = await resolveTokens(req, clientTokens);
     if (tokens.length === 0) {
       throw new Error(
-        'No Apify API key configured. Add keys in Settings → Apify Keys, or set APIFY_TOKEN on Supabase.'
+        'No Apify API key configured. Open Settings → Apify Keys, paste your key, and click Save Keys.'
       );
     }
 
-    const { email, profile } = await findEmailWaterfall(url, tokens);
+    let profile = extractProfile([]);
+    let email: string | null = null;
 
-    let result = {
+    if (mode === 'full') {
+      // One scraper that often returns profile + email (keeps Autofill under ~60s limit)
+      const { items } = await runActor(
+        'dev_fusion~linkedin-profile-scraper',
+        { profileUrls: [url] },
+        tokens,
+        0
+      );
+      if (items?.length) {
+        profile = extractProfile(items);
+        email = extractEmail(items);
+      }
+      if (!profile.first_name) {
+        profile = await fetchProfile(url, tokens);
+      }
+    }
+
+    if (!email) {
+      const emailResult = await findEmailWaterfall(url, tokens);
+      email = emailResult.email;
+      profile = {
+        first_name: profile.first_name || emailResult.profile.first_name,
+        last_name: profile.last_name || emailResult.profile.last_name,
+        company_name: profile.company_name || emailResult.profile.company_name,
+        title: profile.title || emailResult.profile.title,
+      };
+    }
+
+    const result = {
       first_name: profile.first_name,
       last_name: profile.last_name,
       company_name: profile.company_name,
       title: profile.title,
       email,
     };
-
-    if (mode === 'full' && !result.first_name) {
-      const token = tokens[0];
-      const started = await startRun(
-        'apimaestro~linkedin-profile-detail',
-        { urls: [url] },
-        token
-      );
-      if (started.runId && started.datasetId) {
-        const ok = await pollRun(started.runId, token);
-        if (ok) {
-          const items = await fetchDataset(started.datasetId, token);
-          const p = extractProfile(Array.isArray(items) ? items : []);
-          result = { ...result, ...p, email: result.email || extractEmail(items) };
-        }
-      }
-    }
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

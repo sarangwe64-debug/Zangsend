@@ -68,8 +68,14 @@ export function SettingsPage() {
       }
       const primary = data?.find((k) => k.label === 'primary');
       const fallback = data?.find((k) => k.label === 'fallback');
-      if (primary?.api_key_encrypted) setPrimaryKey(primary.api_key_encrypted);
-      if (fallback?.api_key_encrypted) setFallbackKey(fallback.api_key_encrypted);
+      if (primary?.api_key_encrypted) {
+        setPrimaryKey(primary.api_key_encrypted);
+        localStorage.setItem('apify_primary', primary.api_key_encrypted);
+      }
+      if (fallback?.api_key_encrypted) {
+        setFallbackKey(fallback.api_key_encrypted);
+        localStorage.setItem('apify_fallback', fallback.api_key_encrypted);
+      }
     } catch (err) {
       console.warn('Failed to load Apify keys:', err);
     }
@@ -163,6 +169,9 @@ export function SettingsPage() {
         const { error } = await supabase.from('apify_keys').insert(rows);
         if (error) {
           console.warn('Could not save keys to database:', error.message);
+          alert(
+            `Keys saved in this browser, but cloud sync failed: ${error.message}\n\nRun the apify_keys migration in Supabase SQL Editor if the table is missing.`
+          );
         }
       }
 
