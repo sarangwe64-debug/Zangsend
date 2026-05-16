@@ -1,5 +1,8 @@
 import { supabase } from './supabase';
 
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
 /** Apify tokens from Settings localStorage. */
 export function getApifyTokensFromStorage(): string[] {
   const primary = localStorage.getItem('apify_primary')?.trim();
@@ -39,7 +42,7 @@ export async function hasApifyTokens(): Promise<boolean> {
   return tokens.length > 0;
 }
 
-/** Call find-email with readable errors (Autofill + Find Emails). */
+/** Direct invoke — reliable headers for Supabase Edge Functions from the browser. */
 export async function invokeFindEmail(body: {
   url: string;
   mode?: 'email_only' | 'full';
@@ -50,26 +53,36 @@ export async function invokeFindEmail(body: {
     throw new Error('Add your Apify API key in Settings → Apify Keys, then click Save Keys.');
   }
 
-  const { data, error } = await supabase.functions.invoke('find-email', {
-    body: { ...body, tokens },
+  const { data: { session } } = await supabase.auth.getSession();
+  const authToken = session?.access_token ?? supabaseAnonKey;
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/find-email`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+      apikey: supabaseAnonKey,
+    },
+    body: JSON.stringify({ ...body, tokens }),
   });
 
-  if (error) {
-    let message = error.message;
-    const ctx = (error as { context?: Response }).context;
-    if (ctx) {
-      try {
-        const parsed = await ctx.json();
-        if (parsed?.error) message = String(parsed.error);
-      } catch {
-        /* use default message */
-      }
-    }
-    throw new Error(message);
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
   }
 
-  if (data && typeof data === 'object' && 'error' in data && data.error) {
-    throw new Error(String(data.error));
+  if (!res.ok) {
+    const msg =
+      data && typeof data.error === 'string'
+        ? data.error
+        : `find-email failed (${res.status}). Redeploy the function or check Supabase → Edge Functions.`;
+    throw new Error(msg);
+  }
+
+  if (data && typeof data.error === 'string') {
+    throw new Error(data.error);
   }
 
   return data as {
