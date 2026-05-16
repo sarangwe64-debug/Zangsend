@@ -352,7 +352,7 @@ export function ListDetailPage() {
         }
 
         // 3. Send via local server
-        const { data: resData, error: resError } = await supabase.functions.invoke('send-email', {
+        const { error: resError } = await supabase.functions.invoke('send-email', {
           body: {
             to: contact.email,
             subject: subject,

@@ -1,0 +1,207 @@
+================================================================================
+ZANGSEND — FULL STACK SETUP GUIDE FOR CODING AGENTS
+================================================================================
+Read this file FIRST on any fresh clone or new machine. Execute setup via terminal.
+Do NOT ask the user to click through dashboards unless a step truly requires
+browser OAuth with no CLI alternative. Do everything you can automatically.
+
+Repository:  https://github.com/sarangwe64-debug/Zangsend
+Git branch:  master
+Production Supabase project ref: xhwpiagznwkoroitoulz
+Production Supabase URL: https://xhwpiagznwkoroitoulz.supabase.co
+Netlify site name (production): zangsend
+Netlify URL: https://zangsend.netlify.app
+
+================================================================================
+AGENT RULES
+================================================================================
+1. Never commit secrets (.env, .setup-secrets.local, tokens in git remote URLs).
+2. Never paste secrets back to the user in chat; redact as sbp_*** / ghp_***.
+3. Run all commands yourself; do not tell the user "you should run X" unless blocked.
+4. If credentials are missing, ask ONCE for a single file (.setup-secrets.local)
+   using the template below — not six separate questions.
+5. After setup, verify with HTTP tests and npm run build; report a checklist.
+6. Fix git remote if it embeds a token:
+   git remote set-url origin https://github.com/sarangwe64-debug/Zangsend.git
+
+================================================================================
+STEP 0 — PREREQUISITES (install if missing)
+================================================================================
+- Node.js 20+ and npm
+- git
+- GitHub CLI:  winget install GitHub.cli
+- Netlify CLI: npm install -g netlify-cli
+- Supabase CLI: npx supabase --version  (uses npx, no global install required)
+
+================================================================================
+STEP 1 — SECRETS FILE (user provides once; agent creates from template)
+================================================================================
+Copy .setup-secrets.local.example → .setup-secrets.local (gitignored).
+Fill values from user OR from existing .env if present on disk.
+
+Required keys:
+  VITE_SUPABASE_URL          → Supabase Dashboard → Settings → API → Project URL
+  VITE_SUPABASE_ANON_KEY     → same page → anon public key
+  SUPABASE_ACCESS_TOKEN      → https://supabase.com/dashboard/account/tokens (sbp_...)
+  SUPABASE_PROJECT_ID        → xhwpiagznwkoroitoulz (ref from URL)
+  APIFY_TOKEN                → Apify console → Integrations
+  APIFY_TOKEN2               → optional fallback Apify token
+  TELEGRAM_BOT_TOKEN         → @BotFather on Telegram
+  GITHUB_TOKEN               → https://github.com/settings/tokens (repo, workflow scopes)
+  NETLIFY_AUTH_TOKEN         → https://app.netlify.com/user/applications#personal-access-tokens
+
+Load secrets in PowerShell before any command:
+  $f = ".setup-secrets.local"
+  if (-not (Test-Path $f)) { $f = ".env" }
+  Get-Content $f | ForEach-Object {
+    if ($_ -match '^\s*([^#][^=]+)=(.*)$') {
+      Set-Item -Path "env:$($matches[1].Trim())" -Value $matches[2].Trim()
+    }
+  }
+  $env:GH_TOKEN = $env:GITHUB_TOKEN
+  $env:SUPABASE_ACCESS_TOKEN = $env:SUPABASE_ACCESS_TOKEN
+  $env:NETLIFY_AUTH_TOKEN = $env:NETLIFY_AUTH_TOKEN
+
+================================================================================
+STEP 2 — LOCAL APP
+================================================================================
+  npm install
+  npm run build                    → must pass (tsc + vite)
+  npm run dev                      → local only; uses local_server.js + local Supabase functions in DEV
+
+Note: src/lib/supabase.ts routes functions.invoke to 127.0.0.1:54321 in DEV only.
+Production (Netlify) uses real Supabase cloud functions automatically.
+
+================================================================================
+STEP 3 — SUPABASE (cloud backend)
+================================================================================
+  npx supabase link --project-ref $env:SUPABASE_PROJECT_ID
+
+  npx supabase secrets set `
+    "APIFY_TOKEN=$env:APIFY_TOKEN" `
+    "APIFY_TOKEN2=$env:APIFY_TOKEN2" `
+    "TELEGRAM_BOT_TOKEN=$env:TELEGRAM_BOT_TOKEN" `
+    --project-ref $env:SUPABASE_PROJECT_ID
+
+  Deploy all edge functions:
+    $ref = $env:SUPABASE_PROJECT_ID
+    foreach ($fn in @("find-email","send-email","create-draft","process-queue","telegram-bot")) {
+      npx supabase functions deploy $fn --project-ref $ref
+    }
+
+  Verify process-queue (expect HTTP 200):
+    $h = @{ Authorization = "Bearer $env:VITE_SUPABASE_ANON_KEY"; "Content-Type" = "application/json" }
+    Invoke-WebRequest -Uri "$env:VITE_SUPABASE_URL/functions/v1/process-queue" `
+      -Method POST -Headers $h -Body '{}' -UseBasicParsing
+
+  Database schema: supabase/schema.sql (apply via Supabase SQL editor if tables missing).
+
+================================================================================
+STEP 4 — GITHUB ACTIONS SECRETS
+================================================================================
+  $repo = "sarangwe64-debug/Zangsend"
+  gh secret set SUPABASE_URL --body $env:VITE_SUPABASE_URL --repo $repo
+  gh secret set SUPABASE_ANON_KEY --body $env:VITE_SUPABASE_ANON_KEY --repo $repo
+  gh secret set SUPABASE_PROJECT_ID --body $env:SUPABASE_PROJECT_ID --repo $repo
+  gh secret set SUPABASE_ACCESS_TOKEN --body $env:SUPABASE_ACCESS_TOKEN --repo $repo
+  gh secret list --repo $repo
+
+Workflows (already in repo):
+  .github/workflows/deploy-supabase.yml  → deploys functions on push to master
+  .github/workflows/process-queue.yml      → calls process-queue every 5 minutes
+
+Trigger manual deploy after secrets set:
+  gh workflow run "Deploy Supabase Functions" --repo $repo
+
+================================================================================
+STEP 5 — NETLIFY (frontend hosting)
+================================================================================
+  Option A — Site already exists (zangsend):
+    cd <repo>
+    netlify link --name zangsend
+    netlify env:set VITE_SUPABASE_URL $env:VITE_SUPABASE_URL --context production
+    netlify env:set VITE_SUPABASE_ANON_KEY $env:VITE_SUPABASE_ANON_KEY --context production
+    netlify env:set VITE_SUPABASE_URL $env:VITE_SUPABASE_URL --context deploy-preview
+    netlify env:set VITE_SUPABASE_ANON_KEY $env:VITE_SUPABASE_ANON_KEY --context deploy-preview
+    npm run build
+    netlify deploy --prod --dir=dist
+
+  Option B — Create new site:
+    netlify sites:create --name zangsend --account-slug <team-slug>
+    (then same env:set and deploy steps as Option A)
+
+  Build config: netlify.toml (npm run build, publish dist, Node 20)
+  SPA redirects: public/_redirects (/* /index.html 200)
+
+  Link GitHub for auto-deploy (if not linked):
+    User may need one browser step: Netlify → Site configuration → Build & deploy
+    → Link repository → sarangwe64-debug/Zangsend → branch master
+
+================================================================================
+STEP 6 — SUPABASE AUTH (required after Netlify URL is known)
+================================================================================
+  Dashboard: https://supabase.com/dashboard/project/xhwpiagznwkoroitoulz/auth/url-configuration
+
+  Site URL:     https://zangsend.netlify.app
+  Redirect URLs:
+    https://zangsend.netlify.app/**
+    https://zangsend.netlify.app
+
+  If Netlify URL changes, update these immediately or login will fail.
+
+================================================================================
+STEP 7 — PUSH CODE
+================================================================================
+  git add -A
+  git status   → ensure .env and .setup-secrets.local are NOT staged
+  git commit -m "your message"
+  git push origin master
+
+  Use GH_TOKEN for push if needed:
+    git -c credential.helper= push https://$env:GITHUB_TOKEN@github.com/sarangwe64-debug/Zangsend.git master
+  Prefer: gh auth setup-git after gh auth login with token.
+
+================================================================================
+EDGE FUNCTIONS REFERENCE
+================================================================================
+  find-email       → Apify email lookup
+  send-email       → SMTP send via nodemailer (sender credentials in request body)
+  create-draft     → Gmail draft creation
+  process-queue    → scheduled email queue processor
+  telegram-bot     → Telegram notifications
+
+  Settings page calls update-apify-keys — NOT deployed; secrets use supabase secrets set.
+  Apify keys in Settings localStorage are optional; cloud uses APIFY_TOKEN secrets.
+
+================================================================================
+ENV VARS SUMMARY
+================================================================================
+  Local (.env):           VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, APIFY_*, TELEGRAM_*, GITHUB_TOKEN
+  Netlify:                VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+  GitHub Actions:         SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_PROJECT_ID, SUPABASE_ACCESS_TOKEN
+  Supabase Edge secrets:  APIFY_TOKEN, APIFY_TOKEN2, TELEGRAM_BOT_TOKEN
+
+================================================================================
+FINAL VERIFICATION CHECKLIST (agent must complete and report)
+================================================================================
+  [ ] npm run build passes
+  [ ] All 5 edge functions deployed (no 404 on /functions/v1/process-queue)
+  [ ] process-queue POST returns 200
+  [ ] gh secret list shows 4 SUPABASE_* secrets
+  [ ] https://zangsend.netlify.app returns 200
+  [ ] User informed to set Supabase Auth redirect URLs (or set via API if token allows)
+  [ ] No secrets in git diff or remote URL
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+  Functions 404        → not deployed; run Step 3 deploy loop
+  GitHub deploy failed   → SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_ID missing in gh secrets
+  Netlify blank/broken   → VITE_* env vars missing; rebuild after env:set
+  Login fails on Netlify → Step 6 Auth URL configuration
+  DEV email fails        → need local_server.js OR supabase start for functions
+  Build TS errors        → run npm run build and fix before deploy
+
+================================================================================
+END — Execute steps 1–7 in order. Minimize user messages. Report checklist when done.
+================================================================================

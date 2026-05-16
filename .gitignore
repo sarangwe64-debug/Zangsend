@@ -25,3 +25,12 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Local Netlify folder
+.netlify
+
+# Supabase CLI local link state
+supabase/.temp/
+
+# Agent setup secrets (see AGENT_FRESH_SETUP.txt)
+.setup-secrets.local
