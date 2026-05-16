@@ -1,9 +1,10 @@
 /**
- * Run in GitHub Actions (Node) — Gmail SMTP often works here but not on Supabase Edge.
- * Requires secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ * Run in GitHub Actions (Node) — Gmail SMTP works here; Supabase Edge SMTP is blocked.
+ * Requires: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  */
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
+import { resolveMailAttachment, applyTemplateVars } from './email-attachments.mjs';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -40,39 +41,51 @@ const senderMap = new Map((senders || []).map((s) => [s.id, s]));
 
 let sent = 0;
 let failed = 0;
+const errors = [];
 
 for (const email of dueEmails) {
   if (email.data?.is_draft) continue;
   const sender = senderMap.get(email.data?.sender_id);
   if (!sender) {
     failed++;
+    errors.push(`${email.email}: missing sender`);
     continue;
   }
 
-  let subject = email.template?.subject || 'Hello';
-  let body = email.template?.body || '';
-  const fn = email.first_name || email.data?.first_name || '';
-  subject = subject.replace(/\{\{first_name\}\}/g, fn).replace(/\{\{company_name\}\}/g, email.company_name || '');
-  body = body.replace(/\{\{first_name\}\}/g, fn).replace(/\{\{company_name\}\}/g, email.company_name || '');
+  const subject = applyTemplateVars(email.template?.subject || 'Hello', email);
+  const body = applyTemplateVars(email.template?.body || '', email);
 
   try {
-    const t = gmailTransport(sender.email, sender.app_password);
-    await t.sendMail({
+    const mailOptions = {
       from: `"${sender.name || 'ZangSends'}" <${sender.email}>`,
       to: email.email,
       subject,
       html: body,
-    });
-    await supabase.from('contacts').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', email.id);
+    };
+
+    const file = await resolveMailAttachment(supabase, email, email.template);
+    if (file) {
+      mailOptions.attachments = [file];
+    }
+
+    const t = gmailTransport(sender.email, sender.app_password);
+    await t.sendMail(mailOptions);
+    await supabase
+      .from('contacts')
+      .update({ status: 'sent', sent_at: new Date().toISOString(), data: { ...email.data, last_error: null } })
+      .eq('id', email.id);
     sent++;
   } catch (e) {
     failed++;
-    console.error(email.email, e.message);
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`${email.email}: ${msg}`);
     await supabase
       .from('contacts')
-      .update({ data: { ...email.data, last_error: e.message, last_attempt_at: now } })
+      .update({
+        data: { ...email.data, last_error: msg, last_attempt_at: now },
+      })
       .eq('id', email.id);
   }
 }
 
-console.log(JSON.stringify({ msg: 'Done', due: dueEmails.length, sent, failed }));
+console.log(JSON.stringify({ msg: 'Done', due: dueEmails.length, sent, failed, errors }));

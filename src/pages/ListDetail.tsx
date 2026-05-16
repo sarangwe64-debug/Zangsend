@@ -406,8 +406,14 @@ export function ListDetailPage() {
       return;
     }
 
-    // Distribute emails
-    const schedules = distributeEmails(withEmail, senders, workingHours, 45);
+    let hours = workingHours;
+    try {
+      hours = JSON.parse(localStorage.getItem('zangsend_working_hours') || JSON.stringify(workingHours));
+    } catch {
+      /* use state default */
+    }
+
+    const schedules = distributeEmails(withEmail, senders, hours, 45);
     
     setIsSending(true);
     try {

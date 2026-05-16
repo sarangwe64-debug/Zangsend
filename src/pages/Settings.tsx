@@ -414,8 +414,11 @@ export function SettingsPage() {
           {activeTab === 'scheduling' && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-lg font-medium mb-1">Working Hours (IST)</h2>
-                <p className="text-sm text-text-secondary">Set the daily window during which scheduled emails will be sent.</p>
+                <h2 className="text-lg font-medium mb-1">Working Hours (local time)</h2>
+                <p className="text-sm text-text-secondary">
+                  Uses your computer&apos;s timezone. Set Windows to IST if you schedule in India.
+                  Emails spread between start and end, min 2.5 min apart, max 45 per sender per day.
+                </p>
               </div>
 
               <div className="p-5 border border-border bg-surface rounded-lg space-y-5">

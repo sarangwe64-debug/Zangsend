@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { buildAttachmentPayload } from '../lib/attachments';
 
 type SenderRow = {
   id: string;
@@ -68,6 +69,8 @@ export function useQueueProcessor() {
             .replace(/{{last_name}}/g, email.last_name || '')
             .replace(/{{company}}/g, email.company_name || '');
 
+          const attachment = await buildAttachmentPayload(email);
+
           const { error: resError } = await supabase.functions.invoke('send-email', {
             body: {
               to: email.email,
@@ -76,6 +79,7 @@ export function useQueueProcessor() {
               from_email: sender.email,
               app_password: sender.app_password,
               sender_name: sender.name || 'ZangSends',
+              ...(attachment ? { attachment } : {}),
             },
           });
 

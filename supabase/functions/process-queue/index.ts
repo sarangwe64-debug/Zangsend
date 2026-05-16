@@ -115,23 +115,36 @@ serve(async (_req) => {
         html: body,
       };
 
-      if (email.attachment_id) {
+      let attachmentId = email.attachment_id as string | null;
+      const templateIds = email.template?.attachment_ids;
+      if (!attachmentId && Array.isArray(templateIds) && templateIds.length > 0) {
+        attachmentId = templateIds[0];
+      }
+
+      if (attachmentId) {
         const { data: attachment } = await supabase
           .from("attachments")
-          .select("*")
-          .eq("id", email.attachment_id)
+          .select("filename, storage_path")
+          .eq("id", attachmentId)
           .single();
 
         if (attachment?.storage_path) {
-          const { data: publicUrlData } = supabase.storage
+          const { data: blob, error: dlErr } = await supabase.storage
             .from("attachments")
-            .getPublicUrl(attachment.storage_path);
-          mailOptions.attachments = [
-            {
-              filename: attachment.filename || "Attachment",
-              path: publicUrlData.publicUrl,
-            },
-          ];
+            .download(attachment.storage_path);
+
+          if (!dlErr && blob) {
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            let binary = "";
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            mailOptions.attachments = [
+              {
+                filename: attachment.filename || "attachment",
+                content: btoa(binary),
+                encoding: "base64",
+              },
+            ];
+          }
         }
       }
 
