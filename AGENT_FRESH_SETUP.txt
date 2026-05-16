@@ -133,9 +133,16 @@ STEP 5 — NETLIFY (frontend hosting)
   Build config: netlify.toml (npm run build, publish dist, Node 20)
   SPA redirects: public/_redirects (/* /index.html 200)
 
-  Link GitHub for auto-deploy (if not linked):
-    User may need one browser step: Netlify → Site configuration → Build & deploy
-    → Link repository → sarangwe64-debug/Zangsend → branch master
+  Link GitHub for auto-deploy (preferred: fully automated via API):
+    A) API method (no browser):
+       - netlify api createDeployKey → add public_key to GitHub repo deploy keys (gh api)
+       - PATCH https://api.netlify.com/api/v1/sites/<SITE_ID> with repo object
+         (provider github, repo sarangwe64-debug/Zangsend, repo_id, branch master,
+          cmd npm run build, dir dist, deploy_key_id)
+       - POST GitHub webhook to https://api.netlify.com/hooks/github (push, pull_request)
+    B) UI fallback: Netlify → Build & deploy → Link repository → Zangsend / master
+
+  Production site ID: 076916f1-55b3-409e-86b4-785cf45ca459 (name: zangsend)
 
 ================================================================================
 STEP 6 — SUPABASE AUTH (required after Netlify URL is known)
