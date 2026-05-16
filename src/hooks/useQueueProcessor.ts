@@ -38,7 +38,7 @@ export function useQueueProcessor() {
 
         const { data: senders, error: sendersError } = await supabase
           .from('senders')
-          .select('id, email, app_password, display_name')
+          .select('id, email, app_password, provider')
           .eq('user_id', user.id);
 
         if (sendersError) {
