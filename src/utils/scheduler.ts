@@ -9,7 +9,8 @@ export interface WorkingHours {
   end: string;
 }
 
-const MIN_GAP_MS = 150 * 1000; // 2.5 minutes between sends
+const MIN_GAP_MS = 10 * 60 * 1000;
+const MAX_GAP_MS = 30 * 60 * 1000;
 
 function parseMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
@@ -24,70 +25,104 @@ function atLocalMinutes(day: Date, minutesFromMidnight: number): Date {
   return d;
 }
 
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function windowBounds(day: Date, startMin: number, endMin: number) {
+  const dayStart = new Date(day);
+  dayStart.setHours(0, 0, 0, 0);
+  return {
+    dayStart,
+    windowStart: atLocalMinutes(dayStart, startMin),
+    windowEnd: atLocalMinutes(dayStart, endMin),
+  };
+}
+
+/** Move to the next calendar day at working-hours start. */
+function rollToNextDayStart(from: Date, startMin: number): Date {
+  const { dayStart } = windowBounds(from, startMin, 0);
+  const nextDay = new Date(dayStart);
+  nextDay.setDate(nextDay.getDate() + 1);
+  return atLocalMinutes(nextDay, startMin);
+}
+
 /**
- * Next send slot inside [start, end) on a valid day.
- * Working hours use the browser's local timezone (set Windows to IST if you want IST).
+ * Place `candidate` inside [windowStart, windowEnd) on its calendar day, or roll forward.
+ * Returns a time >= now when `enforceNow` is true.
  */
-function clampToWorkingWindow(
+function fitInWorkingWindow(
   candidate: Date,
   now: Date,
   startMin: number,
   endMin: number,
-  slotOffsetMs: number
+  enforceNow: boolean
 ): Date {
-  let d = new Date(candidate);
-
-  // Past due → earliest is now + gap (still clamped to window below)
-  if (d.getTime() < now.getTime()) {
-    d = new Date(now.getTime() + MIN_GAP_MS + slotOffsetMs);
-  }
-
-  const dayStart = new Date(d);
-  dayStart.setHours(0, 0, 0, 0);
-
-  let windowStart = atLocalMinutes(dayStart, startMin);
-  let windowEnd = atLocalMinutes(dayStart, endMin);
-
-  // Empty window (misconfigured): allow any time from now
   if (endMin <= startMin) {
-    return d.getTime() < now.getTime() ? new Date(now.getTime() + MIN_GAP_MS) : d;
+    return enforceNow && candidate.getTime() < now.getTime()
+      ? new Date(now.getTime() + MIN_GAP_MS)
+      : candidate;
   }
 
-  const placeInWindow = (base: Date, offsetMs: number) => {
-    let t = new Date(base.getTime() + offsetMs);
+  let t = new Date(candidate);
+
+  for (let guard = 0; guard < 366; guard++) {
+    const { windowStart, windowEnd } = windowBounds(t, startMin, endMin);
+
     if (t.getTime() >= windowEnd.getTime()) {
-      // Next calendar day at window start + offset
-      const nextDay = new Date(dayStart);
-      nextDay.setDate(nextDay.getDate() + 1);
-      windowStart = atLocalMinutes(nextDay, startMin);
-      windowEnd = atLocalMinutes(nextDay, endMin);
-      t = new Date(windowStart.getTime() + offsetMs);
+      t = rollToNextDayStart(t, startMin);
+      continue;
     }
+
     if (t.getTime() < windowStart.getTime()) {
-      t = new Date(windowStart.getTime() + offsetMs);
+      t = new Date(windowStart);
     }
+
+    if (enforceNow && t.getTime() < now.getTime()) {
+      t = new Date(now.getTime() + MIN_GAP_MS);
+      if (t.getTime() >= windowEnd.getTime()) {
+        t = rollToNextDayStart(t, startMin);
+        continue;
+      }
+      if (t.getTime() < windowStart.getTime()) {
+        t = new Date(windowStart);
+      }
+    }
+
     return t;
-  };
-
-  const curMin = d.getHours() * 60 + d.getMinutes();
-
-  if (curMin < startMin) {
-    d = placeInWindow(windowStart, slotOffsetMs);
-  } else if (curMin >= endMin) {
-    const nextDay = new Date(dayStart);
-    nextDay.setDate(nextDay.getDate() + 1);
-    windowStart = atLocalMinutes(nextDay, startMin);
-    d = placeInWindow(windowStart, slotOffsetMs);
-  } else {
-    d = placeInWindow(d, 0);
   }
 
-  if (d.getTime() < now.getTime()) {
-    d = new Date(now.getTime() + MIN_GAP_MS + slotOffsetMs);
-    d = clampToWorkingWindow(d, now, startMin, endMin, 0);
+  return t;
+}
+
+/**
+ * Next slot for a sender: at least MIN_GAP after `last`, at most MAX_GAP when still
+ * inside the same working day. If last + MAX_GAP would pass window end, roll to next day start.
+ */
+function nextSlotAfter(
+  last: Date | null,
+  now: Date,
+  startMin: number,
+  endMin: number
+): Date {
+  if (last === null) {
+    return fitInWorkingWindow(new Date(now.getTime() + MIN_GAP_MS), now, startMin, endMin, true);
   }
 
-  return d;
+  const minNext = new Date(last.getTime() + MIN_GAP_MS);
+  let maxNext = new Date(last.getTime() + MAX_GAP_MS);
+
+  const { windowEnd } = windowBounds(last, startMin, endMin);
+  if (endMin > startMin && maxNext.getTime() > windowEnd.getTime()) {
+    maxNext = rollToNextDayStart(last, startMin);
+  }
+
+  let candidate = minNext;
+  if (candidate.getTime() > maxNext.getTime()) {
+    candidate = maxNext;
+  }
+
+  return fitInWorkingWindow(candidate, now, startMin, endMin, true);
 }
 
 export function distributeEmails(
@@ -100,49 +135,35 @@ export function distributeEmails(
 
   const startMin = parseMinutes(workingHours.start);
   const endMin = parseMinutes(workingHours.end);
-  const windowMs = Math.max(endMin - startMin, 1) * 60 * 1000;
-
   const now = new Date();
   const results: SchedulingResult[] = [];
 
-  const emailsPerSender = new Array(senders.length).fill(0);
-  for (let i = 0; i < contacts.length; i++) {
-    emailsPerSender[i % senders.length]++;
-  }
-
-  const nextSlotK = new Array(senders.length).fill(0);
+  const lastBySender: (Date | null)[] = senders.map(() => null);
+  const dailyCountBySender: Map<string, number>[] = senders.map(() => new Map());
 
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
     const senderIndex = i % senders.length;
     const sender = senders[senderIndex];
 
-    const k = nextSlotK[senderIndex];
-    const dayOffset = Math.floor(k / maxPerDayPerSender);
-    const indexInDay = k % maxPerDayPerSender;
+    let target = nextSlotAfter(lastBySender[senderIndex], now, startMin, endMin);
 
-    const totalForSender = emailsPerSender[senderIndex];
-    const remainingForSender = totalForSender - dayOffset * maxPerDayPerSender;
-    const emailsToday = Math.min(maxPerDayPerSender, Math.max(remainingForSender, 1));
+    const counts = dailyCountBySender[senderIndex];
+    let guard = 0;
+    while (guard++ < 366) {
+      const key = dayKey(target);
+      const count = counts.get(key) ?? 0;
+      if (count < maxPerDayPerSender) break;
+      target = fitInWorkingWindow(rollToNextDayStart(target, startMin), now, startMin, endMin, true);
+    }
 
-    let stepMs = emailsToday > 1 ? windowMs / emailsToday : windowMs;
-    if (stepMs < MIN_GAP_MS) stepMs = MIN_GAP_MS;
-
-    const baseDay = new Date();
-    baseDay.setHours(0, 0, 0, 0);
-    baseDay.setDate(baseDay.getDate() + dayOffset);
-
-    const slotOffsetMs = indexInDay * stepMs;
-    let targetDate = atLocalMinutes(baseDay, startMin);
-    targetDate = new Date(targetDate.getTime() + slotOffsetMs);
-
-    targetDate = clampToWorkingWindow(targetDate, now, startMin, endMin, slotOffsetMs);
-
-    nextSlotK[senderIndex]++;
+    const key = dayKey(target);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    lastBySender[senderIndex] = target;
 
     results.push({
       contactId: contact.id,
-      scheduled_send_at: targetDate.toISOString(),
+      scheduled_send_at: target.toISOString(),
       sender_id: sender.id,
     });
   }

@@ -480,7 +480,7 @@ export function SettingsPage() {
                 <h2 className="text-lg font-medium mb-1">Working Hours (local time)</h2>
                 <p className="text-sm text-text-secondary">
                   Uses your computer&apos;s timezone. Set Windows to IST if you schedule in India.
-                  Emails spread between start and end, min 2.5 min apart, max 45 per sender per day.
+                  Emails send 10–30 min apart within start/end, max 45 per sender per day.
                 </p>
               </div>
 
@@ -521,7 +521,7 @@ export function SettingsPage() {
 
               <div className="p-4 bg-elevated border border-border rounded-lg text-xs text-text-secondary space-y-1.5">
                 <p className="font-medium text-text-primary mb-2">How Scheduling Works</p>
-                <p>1. When you schedule an email campaign, the send times are <strong>distributed evenly</strong> between the start and end times you configure here.</p>
+                <p>1. When you schedule an email campaign, send times are spaced <strong>10–30 minutes apart</strong> within the start and end times you configure here.</p>
                 <p>2. The scheduler will automatically switch between your connected Gmail accounts.</p>
                 <p>3. To protect your accounts from being marked as spam, it will limit each account to <strong>45 emails per day</strong>.</p>
               </div>
