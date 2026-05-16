@@ -6,7 +6,7 @@ type SenderRow = {
   id: string;
   email: string;
   app_password: string;
-  name?: string | null;
+  display_name?: string | null;
 };
 
 /** Backup queue processor while the tab is open (GitHub cron + process-queue is primary). */
@@ -38,13 +38,16 @@ export function useQueueProcessor() {
 
         const { data: senders, error: sendersError } = await supabase
           .from('senders')
-          .select('id, email, app_password, name')
+          .select('id, email, app_password, display_name')
           .eq('user_id', user.id);
 
-        if (sendersError || !senders?.length) {
-          console.error('[Queue] No senders in database for user');
+        if (sendersError) {
+          if (sendersError.code === 'PGRST205' || sendersError.message.includes('senders')) {
+            console.warn('[Queue] senders table missing — run supabase/RUN_ALL_MIGRATIONS.sql');
+          }
           return;
         }
+        if (!senders?.length) return;
 
         const senderMap = new Map(senders.map((s: SenderRow) => [s.id, s]));
 
@@ -78,7 +81,7 @@ export function useQueueProcessor() {
               html: body,
               from_email: sender.email,
               app_password: sender.app_password,
-              sender_name: sender.name || 'ZangSends',
+              sender_name: sender.display_name || sender.email.split('@')[0] || 'ZangSends',
               ...(attachment ? { attachment } : {}),
             },
           });
