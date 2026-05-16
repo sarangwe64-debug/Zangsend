@@ -210,7 +210,14 @@ export function ListDetailPage() {
   };
 
   const applyFindEmailResult = async (
-    contact: { id: string; data?: Record<string, unknown> },
+    contact: {
+      id: string;
+      data?: Record<string, unknown>;
+      first_name?: string | null;
+      last_name?: string | null;
+      company_name?: string | null;
+      title?: string | null;
+    },
     data: {
       email?: string | null;
       first_name?: string | null;
@@ -219,24 +226,47 @@ export function ListDetailPage() {
       title?: string | null;
     }
   ) => {
-    const patch = {
+    const patch: Record<string, unknown> = {
       email: data.email || null,
-      first_name: data.first_name || undefined,
-      last_name: data.last_name || undefined,
-      company_name: data.company_name || undefined,
-      title: data.title || undefined,
       status: data.email ? 'email_found' : 'email_not_found',
       data: {
         ...(contact.data || {}),
         email: data.email || null,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        company_name: data.company_name,
-        title: data.title,
       },
     };
+
+    const profileKeys = ['first_name', 'last_name', 'company_name', 'title'] as const;
+    for (const key of profileKeys) {
+      const value = data[key];
+      if (value) {
+        patch[key] = value;
+        (patch.data as Record<string, unknown>)[key] = value;
+      }
+    }
+
     await supabase.from('contacts').update(patch).eq('id', contact.id);
-    updateContactLocally(contact.id, patch);
+    updateContactLocally(contact.id, patch as Parameters<typeof updateContactLocally>[1]);
+  };
+
+  const handleInlineEmailSave = async (
+    contact: { id: string; email?: string | null; status: string; data?: Record<string, unknown> },
+    raw: string
+  ) => {
+    const email = raw.trim() || null;
+    if (email === (contact.email || null)) return;
+
+    const patch: Record<string, unknown> = {
+      email,
+      data: { ...(contact.data || {}), email },
+    };
+    if (email) {
+      patch.status = 'email_found';
+    } else if (contact.status === 'email_found') {
+      patch.status = 'pending';
+    }
+
+    await supabase.from('contacts').update(patch).eq('id', contact.id);
+    updateContactLocally(contact.id, patch as Parameters<typeof updateContactLocally>[1]);
   };
 
   const handleFindEmails = async () => {
@@ -831,16 +861,27 @@ export function ListDetailPage() {
                     <span className="flex items-center gap-1 text-amber-400 text-xs font-sans">
                       <Loader2 className="w-3 h-3 animate-spin" /> Searching...
                     </span>
-                  ) : contact.email ? (
-                    <span className="text-text-primary text-xs">{contact.email}</span>
-                  ) : contact.status === 'email_not_found' ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 font-medium">Not Found</span>
                   ) : (
-                    <span className="text-text-tertiary">—</span>
+                    <div className="flex items-center gap-1.5 min-w-[140px]">
+                      {contact.status === 'email_not_found' && !contact.email && (
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 font-medium shrink-0 font-sans">
+                          Not Found
+                        </span>
+                      )}
+                      <input
+                        type="email"
+                        defaultValue={contact.email || ''}
+                        key={`${contact.id}-${contact.email ?? ''}-${contact.status}`}
+                        placeholder="Add email"
+                        className="bg-transparent border border-transparent hover:border-border focus:border-primary focus:bg-background rounded px-1.5 py-1 text-xs text-text-primary outline-none w-full min-w-0 font-mono transition-colors"
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={(e) => handleInlineEmailSave(contact, e.target.value)}
+                      />
+                    </div>
                   )}
                 </td>
                 <td className="px-6 py-3 text-text-secondary">
-                  <select 
+                  <select
                     className="bg-transparent border border-transparent hover:border-border focus:border-primary focus:bg-background rounded px-1.5 py-1 text-[12.5px] outline-none w-full max-w-[140px] appearance-none transition-colors"
                     value={contact.template_id || ''}
                     onClick={(e) => e.stopPropagation()} 

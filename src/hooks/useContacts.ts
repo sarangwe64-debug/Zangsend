@@ -131,8 +131,27 @@ export function useContacts(listId?: string) {
     }
   };
 
+  const mergeContactFields = (c: Contact, mergedData?: Contact['data']): Contact => ({
+    ...c,
+    first_name: c.first_name || mergedData?.first_name || null,
+    last_name: c.last_name || mergedData?.last_name || null,
+    company_name: c.company_name || mergedData?.company_name || null,
+    title: c.title || mergedData?.title || null,
+    email: c.email || mergedData?.email || null,
+    linkedin_url: c.linkedin_url || mergedData?.linkedin_url || null,
+  });
+
   const updateContactLocally = (id: string, updates: Partial<Contact>) => {
-    setContacts(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    setContacts(prev => prev.map(c => {
+      if (c.id !== id) return c;
+      const mergedData = updates.data ? { ...c.data, ...updates.data } : c.data;
+      const next: Contact = { ...c };
+      for (const [key, value] of Object.entries(updates)) {
+        if (value !== undefined) (next as Record<string, unknown>)[key] = value;
+      }
+      if (updates.data) next.data = mergedData;
+      return mergeContactFields(next, mergedData);
+    }));
   };
 
   const bulkUpdateContactsLocally = (ids: string[], updates: Partial<Contact>) => {
