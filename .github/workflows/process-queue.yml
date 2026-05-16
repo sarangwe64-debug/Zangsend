@@ -2,16 +2,29 @@ name: Process Email Queue
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # Run every 5 minutes
-  workflow_dispatch: # Allow manual trigger
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/process-queue.yml'
+      - 'scripts/process-queue-github.mjs'
 
 jobs:
   process-queue:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Process Queue Function
-        run: |
-          curl -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/process-queue" \
-          -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-          -H "Content-Type: application/json" \
-          -d '{}'
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install nodemailer @supabase/supabase-js
+
+      - name: Process scheduled emails (Node + Gmail SMTP)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/process-queue-github.mjs

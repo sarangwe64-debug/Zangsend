@@ -85,7 +85,16 @@ export function useQueueProcessor() {
               .update({ status: 'sent', sent_at: new Date().toISOString() })
               .eq('id', email.id);
           } else {
-            await supabase.from('contacts').update({ status: 'bounced' }).eq('id', email.id);
+            await supabase
+              .from('contacts')
+              .update({
+                data: {
+                  ...(email.data || {}),
+                  last_error: resError.message,
+                  last_attempt_at: new Date().toISOString(),
+                },
+              })
+              .eq('id', email.id);
             console.error(`[Queue] Failed to send to ${email.email}:`, resError.message);
           }
         }

@@ -1,143 +1,176 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
-import nodemailer from "npm:nodemailer";
+import { createGmailTransport } from "../_shared/gmail.ts";
 
-const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-// Create a service role client to bypass RLS for background queue processing
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 serve(async (_req) => {
-  console.log("Queue processor started...");
-  
+  if (_req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
+  const summary = { due: 0, sent: 0, failed: 0, skipped: 0, errors: [] as string[] };
+
   try {
+    if (!supabaseUrl || !supabaseKey) {
+      return new Response(JSON.stringify({ error: "Missing Supabase service credentials" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const now = new Date().toISOString();
 
-    // Find contacts scheduled to be sent right now or in the past
     const { data: dueEmails, error } = await supabase
-      .from('contacts')
-      .select('*, template:templates(*)')
-      .eq('status', 'scheduled')
-      .lte('scheduled_send_at', now)
+      .from("contacts")
+      .select("*, template:templates(*)")
+      .eq("status", "scheduled")
+      .lte("scheduled_send_at", now)
       .limit(100);
 
     if (error) {
-      console.error("Failed to fetch due emails:", error);
-      return new Response("Error fetching emails: " + error.message, { status: 500 });
-    }
-
-    if (!dueEmails || dueEmails.length === 0) {
-      return new Response(JSON.stringify({ msg: "No emails due", processed: 0 }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (!supabaseUrl || !supabaseKey) {
-      return new Response(JSON.stringify({ error: "Server misconfigured: missing Supabase credentials" }), {
+      return new Response(JSON.stringify({ error: error.message }), {
         status: 500,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Found ${dueEmails.length} emails to send.`);
-
-    // Group by sender to optimize database queries
-    const senderIds = [...new Set(dueEmails.map(e => e.data?.sender_id).filter(Boolean))];
-    
-    const { data: senders, error: senderError } = await supabase
-      .from('senders')
-      .select('*')
-      .in('id', senderIds);
-
-    if (senderError || !senders) {
-      console.error("Failed to fetch senders:", senderError);
-      return new Response("Error fetching senders", { status: 500 });
+    if (!dueEmails?.length) {
+      return new Response(JSON.stringify({ msg: "No emails due", ...summary }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const senderMap = new Map(senders.map(s => [s.id, s]));
+    summary.due = dueEmails.length;
+
+    const senderIds = [...new Set(dueEmails.map((e) => e.data?.sender_id).filter(Boolean))];
+
+    const { data: senders, error: senderError } = await supabase
+      .from("senders")
+      .select("*")
+      .in("id", senderIds);
+
+    if (senderError) {
+      return new Response(JSON.stringify({ error: senderError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const senderMap = new Map((senders || []).map((s) => [s.id, s]));
 
     for (const email of dueEmails) {
-      // If it's a draft, skip it completely.
-      if (email.data?.is_draft) continue;
-
-      const sender = senderMap.get(email.data?.sender_id);
-      
-      if (!sender) {
-        console.error(`Sender not found for contact ${email.id}`);
-        // Optionally mark as failed/bounced or leave scheduled
-        await supabase.from('contacts').update({ status: 'bounced' }).eq('id', email.id);
+      if (email.data?.is_draft) {
+        summary.skipped++;
         continue;
       }
 
-      // Compile subject and body templates
-      let subject = email.template?.subject || 'Hello';
-      let body = email.template?.body || '';
+      const sender = senderMap.get(email.data?.sender_id);
 
-      subject = subject.replace(/{{first_name}}/g, email.first_name || '')
-                       .replace(/{{last_name}}/g, email.last_name || '')
-                       .replace(/{{company}}/g, email.company_name || '');
-                       
-      body = body.replace(/{{first_name}}/g, email.first_name || '')
-                 .replace(/{{last_name}}/g, email.last_name || '')
-                 .replace(/{{company}}/g, email.company_name || '');
+      if (!sender) {
+        summary.failed++;
+        const errMsg = `No sender for contact ${email.id}`;
+        summary.errors.push(errMsg);
+        await supabase
+          .from("contacts")
+          .update({
+            data: { ...(email.data || {}), last_error: errMsg, last_attempt_at: now },
+          })
+          .eq("id", email.id);
+        continue;
+      }
 
-      // Send the email using Nodemailer over Deno
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: sender.email,
-          pass: sender.app_password
-        }
-      });
+      let subject = email.template?.subject || "Hello";
+      let body = email.template?.body || "";
 
-      const mailOptions: any = {
-        from: `"${sender.name || 'ZangSends'}" <${sender.email}>`,
+      const vars: Record<string, string> = {
+        first_name: email.first_name || email.data?.first_name || "",
+        last_name: email.last_name || email.data?.last_name || "",
+        company: email.company_name || email.data?.company_name || "",
+        company_name: email.company_name || email.data?.company_name || "",
+        title: email.title || email.data?.title || "",
+      };
+
+      for (const [key, val] of Object.entries(vars)) {
+        const re = new RegExp(`\\{\\{${key}\\}\\}`, "g");
+        subject = subject.replace(re, val);
+        body = body.replace(re, val);
+      }
+
+      const transporter = createGmailTransport(sender.email, sender.app_password);
+
+      const mailOptions: Record<string, unknown> = {
+        from: `"${sender.name || "ZangSends"}" <${sender.email}>`,
         to: email.email,
         subject,
-        html: body
+        html: body,
       };
 
       if (email.attachment_id) {
-        // Fetch attachment details to get the storage path
         const { data: attachment } = await supabase
-          .from('attachments')
-          .select('*')
-          .eq('id', email.attachment_id)
+          .from("attachments")
+          .select("*")
+          .eq("id", email.attachment_id)
           .single();
 
         if (attachment?.storage_path) {
-          const { data: publicUrlData } = supabase.storage.from('attachments').getPublicUrl(attachment.storage_path);
+          const { data: publicUrlData } = supabase.storage
+            .from("attachments")
+            .getPublicUrl(attachment.storage_path);
           mailOptions.attachments = [
             {
-              filename: attachment.filename || 'Attachment',
-              path: publicUrlData.publicUrl
-            }
+              filename: attachment.filename || "Attachment",
+              path: publicUrlData.publicUrl,
+            },
           ];
         }
       }
 
       try {
         const info = await transporter.sendMail(mailOptions);
-        console.log(`Email sent to ${email.email} (MessageID: ${info.messageId})`);
-        
-        // Mark as sent
-        await supabase.from('contacts').update({ 
-          status: 'sent', 
-          sent_at: new Date().toISOString() 
-        }).eq('id', email.id);
-        
-      } catch (sendErr: any) {
-        console.error(`Failed to send to ${email.email}:`, sendErr.message);
-        // Mark as bounced on failure
-        await supabase.from('contacts').update({ status: 'bounced' }).eq('id', email.id);
+        await supabase
+          .from("contacts")
+          .update({
+            status: "sent",
+            sent_at: new Date().toISOString(),
+            data: { ...(email.data || {}), last_error: null },
+          })
+          .eq("id", email.id);
+        summary.sent++;
+        console.log(`Sent to ${email.email}: ${info.messageId}`);
+      } catch (sendErr: unknown) {
+        const errMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+        summary.failed++;
+        summary.errors.push(`${email.email}: ${errMsg}`);
+        // Keep status scheduled so GitHub cron / retry can run again
+        await supabase
+          .from("contacts")
+          .update({
+            data: { ...(email.data || {}), last_error: errMsg, last_attempt_at: now },
+          })
+          .eq("id", email.id);
+        console.error(`Failed ${email.email}:`, errMsg);
       }
     }
 
-    return new Response("Queue processed successfully", { status: 200 });
-  } catch (err: any) {
-    console.error("Unhandled error:", err.message);
-    return new Response(`Error: ${err.message}`, { status: 500 });
+    return new Response(JSON.stringify({ msg: "Queue processed", ...summary }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: errMsg, ...summary }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });

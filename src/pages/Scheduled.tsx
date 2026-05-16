@@ -1,17 +1,17 @@
-import { useState, useEffect } from 'react';
-import { Calendar, Search, Filter, Clock, X, RotateCcw } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Calendar, Search, Filter, Clock, X, RotateCcw, Play, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export function ScheduledPage() {
   const [scheduled, setScheduled] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRows, setSelectedRows] = useState<string[]>([]);
   const [editingTimeId, setEditingTimeId] = useState<string | null>(null);
   const [editTimeValue, setEditTimeValue] = useState<string>('');
 
-  useEffect(() => {
-    const fetchScheduled = async () => {
+  const fetchScheduled = useCallback(async () => {
       try {
         const [contactsRes, templatesRes, listsRes] = await Promise.all([
           supabase.from('contacts').select('*').eq('status', 'scheduled'),
@@ -51,9 +51,36 @@ export function ScheduledPage() {
       } finally {
         setLoading(false);
       }
-    };
-    fetchScheduled();
   }, []);
+
+  useEffect(() => {
+    fetchScheduled();
+    const interval = setInterval(fetchScheduled, 30000);
+    return () => clearInterval(interval);
+  }, [fetchScheduled]);
+
+  const handleProcessNow = async () => {
+    setProcessing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('process-queue', { body: {} });
+      if (error) throw error;
+      const msg = data?.msg || 'Queue run complete';
+      const detail = data
+        ? `Due: ${data.due ?? 0}, Sent: ${data.sent ?? 0}, Failed: ${data.failed ?? 0}`
+        : '';
+      if (data?.errors?.length) {
+        alert(`${msg}\n${detail}\n\nFirst error: ${data.errors[0]}`);
+      } else {
+        alert(`${msg}\n${detail}`);
+      }
+      await fetchScheduled();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Queue processing failed';
+      alert(message);
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -167,6 +194,15 @@ export function ScheduledPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+        <button
+          type="button"
+          onClick={handleProcessNow}
+          disabled={processing}
+          className="btn btn-primary text-xs h-8 px-3"
+        >
+          {processing ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-2" />}
+          Send due now
+        </button>
         <button className="btn btn-secondary text-xs h-8 px-3">
           <Filter className="w-3.5 h-3.5 mr-2" />
           Filter

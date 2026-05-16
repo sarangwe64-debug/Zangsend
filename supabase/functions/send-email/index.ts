@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import nodemailer from "npm:nodemailer";
+import { createGmailTransport } from "../_shared/gmail.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,13 +18,7 @@ serve(async (req) => {
       throw new Error('Missing required fields');
     }
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: from_email,
-        pass: app_password
-      }
-    });
+    const transporter = createGmailTransport(from_email, app_password);
 
     const mailOptions: any = {
       from: `"${sender_name || 'ZangSends'}" <${from_email}>`,
