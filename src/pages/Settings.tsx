@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Mail, Key, MessageCircle, Users, CreditCard, Check, Eye, EyeOff, Loader2, CheckCircle, XCircle, Plus, Trash2, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState('apify');
-  const [botToken, setBotToken] = useState('8611092343:AAGSLtQIn6weRg6eHFy1wOxg5SAeVIK8xuQ');
+  const [botToken, setBotToken] = useState(() => localStorage.getItem('telegram_bot_token') || '');
 
-  // Apify keys — persisted in localStorage
-  const [primaryKey, setPrimaryKey] = useState(() => localStorage.getItem('apify_primary') || 'apify_api_DgnvKfO37PtqUZGcZKn6bNzvhKdbXq4jViUV');
-  const [fallbackKey, setFallbackKey] = useState(() => localStorage.getItem('apify_fallback') || 'apify_api_ibKagGGKFMueztXM2HxupPOlsDIoVc0Z8hkK');
+  // Apify keys — local dev only; production uses Supabase secrets (APIFY_TOKEN)
+  const [primaryKey, setPrimaryKey] = useState(() => localStorage.getItem('apify_primary') || '');
+  const [fallbackKey, setFallbackKey] = useState(() => localStorage.getItem('apify_fallback') || '');
   const [showPrimary, setShowPrimary] = useState(false);
   const [showFallback, setShowFallback] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,13 +31,7 @@ export function SettingsPage() {
     }
   });
 
-  useEffect(() => {
-    if (activeTab === 'sender') {
-      fetchSenders();
-    }
-  }, [activeTab]);
-
-  const fetchSenders = async () => {
+  const fetchSenders = useCallback(async () => {
     setLoadingSenders(true);
     try {
       const { data, error } = await supabase
@@ -57,7 +51,13 @@ export function SettingsPage() {
     } finally {
       setLoadingSenders(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'sender') {
+      fetchSenders();
+    }
+  }, [activeTab, fetchSenders]);
 
   const handleAddSender = async () => {
     if (!newSender.email || !newSender.app_password) return;
@@ -111,10 +111,6 @@ export function SettingsPage() {
     try {
       localStorage.setItem('apify_primary', primaryKey.trim());
       localStorage.setItem('apify_fallback', fallbackKey.trim());
-      // Try to hot-update the local server or edge function
-      await supabase.functions.invoke('update-apify-keys', {
-        body: { primary: primaryKey.trim(), fallback: fallbackKey.trim() }
-      }).catch(() => {}); // ignore if server/function not responding
       setSaveResult('success');
     } catch {
       setSaveResult('error');
@@ -268,7 +264,8 @@ export function SettingsPage() {
 
               <div className="p-4 bg-elevated border border-border rounded-lg text-xs text-text-secondary space-y-1.5">
                 <p className="font-medium text-text-primary mb-2">How email finding works</p>
-                <p>1. Your <strong>local server</strong> (started via <code className="font-mono bg-background px-1 rounded">npm run dev</code>) receives requests from the browser.</p>
+                <p>Production uses keys set via <code className="font-mono bg-background px-1 rounded">supabase secrets set APIFY_TOKEN=...</code>. Local dev uses keys saved here + <code className="font-mono bg-background px-1 rounded">npm run dev</code>.</p>
+                <p>1. Your <strong>local server</strong> receives requests from the browser when running in dev mode.</p>
                 <p>2. It uses a <strong>waterfall of 5 actors</strong> to find the email, starting with <strong>anchor/linkedin-to-email</strong> (fastest, ~5 seconds).</p>
                 <p>3. If the first fails, it automatically tries <strong>apimaestro</strong>, <strong>vulnv</strong>, <strong>snipercoder</strong>, and <strong>code_crafter</strong>.</p>
                 <p>4. The free Apify plan gives $5/month ≈ 500–1000 email lookups.</p>
@@ -288,7 +285,16 @@ export function SettingsPage() {
                   <p className="text-xs text-text-secondary mb-2">Obtain from @BotFather on Telegram.</p>
                   <div className="flex gap-2">
                     <input type="password" value={botToken} onChange={(e) => setBotToken(e.target.value)} className="input-field flex-1 font-mono" />
-                    <button className="btn btn-primary">Save & Validate</button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => {
+                        localStorage.setItem('telegram_bot_token', botToken.trim());
+                        alert('Telegram token saved locally. Set TELEGRAM_BOT_TOKEN in Supabase secrets for production.');
+                      }}
+                    >
+                      Save
+                    </button>
                   </div>
                 </div>
                 {botToken && (

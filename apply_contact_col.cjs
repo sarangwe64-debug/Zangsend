@@ -1,32 +1,21 @@
 const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { requireEnv } = require('./scripts/load-env.cjs');
 
-const connectionString = 'postgresql://postgres:nVfOd8PrZrV3UbzD@db.xhwpiagznwkoroitoulz.supabase.co:5432/postgres';
+let connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+if (!connectionString) connectionString = requireEnv('DATABASE_URL');
 
-async function applySchema() {
-  const client = new Client({
-    connectionString,
-    ssl: { rejectUnauthorized: false }
-  });
-
-  try {
-    console.log('Connecting to database...');
-    await client.connect();
-    
-    console.log('Reading add_contact_attachment_col.sql...');
-    const schemaPath = path.join(__dirname, 'add_contact_attachment_col.sql');
-    const schema = fs.readFileSync(schemaPath, 'utf8');
-    
-    console.log('Executing schema...');
-    await client.query(schema);
-    
-    console.log('✅ Schema successfully applied!');
-  } catch (err) {
-    console.error('❌ Error applying schema:', err.message);
-  } finally {
-    await client.end();
-  }
+async function main() {
+  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  const sql = fs.readFileSync(path.join(__dirname, 'add_contact_attachment_col.sql'), 'utf8');
+  await client.query(sql);
+  console.log('Contact attachment column applied.');
+  await client.end();
 }
 
-applySchema();
+main().catch((e) => {
+  console.error(e.message);
+  process.exit(1);
+});

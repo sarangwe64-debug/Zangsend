@@ -8,7 +8,7 @@ const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 // Create a service role client to bypass RLS for background queue processing
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-serve(async (req) => {
+serve(async (_req) => {
   console.log("Queue processor started...");
   
   try {
@@ -28,17 +28,17 @@ serve(async (req) => {
     }
 
     if (!dueEmails || dueEmails.length === 0) {
-      const { data: allScheduled } = await supabase.from('contacts').select('id').eq('status', 'scheduled');
-      const { data: allContacts } = await supabase.from('contacts').select('id');
-      
-      return new Response(JSON.stringify({
-        msg: "No emails due",
-        dueEmailsLength: dueEmails?.length,
-        allScheduledLength: allScheduled?.length,
-        allContactsLength: allContacts?.length,
-        urlLength: supabaseUrl.length,
-        keyLength: supabaseKey.length
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ msg: "No emails due", processed: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!supabaseUrl || !supabaseKey) {
+      return new Response(JSON.stringify({ error: "Server misconfigured: missing Supabase credentials" }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     console.log(`Found ${dueEmails.length} emails to send.`);

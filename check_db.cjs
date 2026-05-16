@@ -1,18 +1,20 @@
 const { Client } = require('pg');
-const c = new Client({
-  connectionString: 'postgresql://postgres:nVfOd8PrZrV3UbzD@db.xhwpiagznwkoroitoulz.supabase.co:5432/postgres',
-  ssl: { rejectUnauthorized: false }
-});
+const { requireEnv } = require('./scripts/load-env.cjs');
 
-c.connect()
-  .then(() => c.query(`
-    SELECT conname, conrelid::regclass as child_table, confdeltype 
-    FROM pg_constraint 
-    WHERE confrelid = 'lists'::regclass 
-    AND contype = 'f'
-  `))
-  .then(r => {
-    console.log('Tables referencing lists:', JSON.stringify(r.rows, null, 2));
-    c.end();
-  })
-  .catch(e => { console.error(e.message); c.end(); });
+let connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL;
+if (!connectionString) connectionString = requireEnv('DATABASE_URL');
+
+async function main() {
+  const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  const res = await client.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1`
+  );
+  console.log(res.rows.map((r) => r.table_name).join(', '));
+  await client.end();
+}
+
+main().catch((e) => {
+  console.error(e.message);
+  process.exit(1);
+});

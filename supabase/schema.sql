@@ -74,7 +74,7 @@ alter table public.campaigns enable row level security;
 create policy "Users can manage own campaigns" on campaigns for all using (auth.uid() = user_id);
 
 -- CONTACTS
-create type contact_status_enum as enum ('pending', 'email_found', 'email_not_found', 'scheduled', 'sent', 'bounced', 'replied', 'follow_up_scheduled');
+create type contact_status_enum as enum ('pending', 'email_found', 'email_not_found', 'scheduled', 'sent', 'bounced', 'replied', 'follow_up_scheduled', 'draft');
 
 create table public.contacts (
   id uuid default uuid_generate_v4() primary key,

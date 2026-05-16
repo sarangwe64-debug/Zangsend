@@ -1,8 +1,11 @@
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { CommandPalette } from '../CommandPalette';
+import { useQueueProcessor } from '../../hooks/useQueueProcessor';
 
 export function AppLayout() {
+  useQueueProcessor();
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />

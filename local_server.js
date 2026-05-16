@@ -16,12 +16,15 @@ app.use((req, res, next) => {
 });
 
 // ── Dual Apify token rotation ──────────────────────────────────────────────
-let APIFY_TOKENS = [
-  process.env.APIFY_TOKEN  || 'apify_api_DgnvKfO37PtqUZGcZKn6bNzvhKdbXq4jViUV',
-  process.env.APIFY_TOKEN2 || 'apify_api_ibKagGGKFMueztXM2HxupPOlsDIoVc0Z8hkK',
-];
+let APIFY_TOKENS = [process.env.APIFY_TOKEN, process.env.APIFY_TOKEN2].filter(Boolean);
+if (APIFY_TOKENS.length === 0) {
+  console.warn('[ZangSends] Set APIFY_TOKEN in .env for local email finding.');
+}
 let currentTokenIndex = 0;
-const getToken = () => APIFY_TOKENS[currentTokenIndex];
+const getToken = () => {
+  if (APIFY_TOKENS.length === 0) throw new Error('APIFY_TOKEN not set in .env');
+  return APIFY_TOKENS[currentTokenIndex];
+};
 const rotateToken = () => {
   currentTokenIndex = (currentTokenIndex + 1) % APIFY_TOKENS.length;
   console.log(`[Token] Rotated to index ${currentTokenIndex}`);

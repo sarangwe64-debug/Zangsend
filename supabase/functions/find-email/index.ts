@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const APIFY_TOKEN = Deno.env.get('APIFY_TOKEN') ?? 'apify_api_ibKagGGKFMueztXM2HxupPOlsDIoVc0Z8hkK';
+const APIFY_TOKEN = Deno.env.get('APIFY_TOKEN') ?? Deno.env.get('APIFY_TOKEN2') ?? '';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,12 +68,15 @@ serve(async (req) => {
   }
 
   try {
+    if (!APIFY_TOKEN) {
+      throw new Error('APIFY_TOKEN is not configured on Supabase. Run: supabase secrets set APIFY_TOKEN=...');
+    }
     const { url } = await req.json();
     if (!url) {
       throw new Error('LinkedIn URL is required');
     }
 
-    let result = {
+    const result = {
       first_name: null,
       last_name: null,
       company_name: null,

@@ -359,7 +359,7 @@ export function ListDetailPage() {
             html: html,
             from_email: sender.email,
             app_password: sender.app_password,
-            sender_name: "Krishn Veer",
+            sender_name: sender.name || 'ZangSends',
             attachment: attachmentConfig
           }
         });
@@ -417,7 +417,7 @@ export function ListDetailPage() {
         const contact = withEmail.find(c => c.id === s.contactId);
         const currentData = (contact as any)?.data || {};
         return supabase.from('contacts').update({
-          status: type === 'draft' ? 'draft' : 'scheduled',
+          status: type === 'draft' ? 'pending' : 'scheduled',
           scheduled_send_at: type === 'draft' ? null : s.scheduled_send_at,
           data: { ...currentData, sender_id: s.sender_id, is_draft: type === 'draft' }
         }).eq('id', s.contactId);
@@ -429,7 +429,7 @@ export function ListDetailPage() {
         const contact = withEmail.find(c => c.id === s.contactId);
         const currentData = (contact as any)?.data || {};
         updateContactLocally(s.contactId, { 
-          status: type === 'draft' ? 'draft' : 'scheduled', 
+          status: type === 'draft' ? 'pending' : 'scheduled', 
           scheduled_send_at: type === 'draft' ? null : s.scheduled_send_at,
           data: { ...currentData, sender_id: s.sender_id, is_draft: type === 'draft' } 
         } as any);
@@ -604,7 +604,7 @@ export function ListDetailPage() {
     if (activeTab === 'Email Found') return c.status === 'email_found';
     if (activeTab === 'Sent') return c.status === 'sent';
     if (activeTab === 'Bounced') return c.status === 'email_not_found';
-    if (activeTab === 'Draft') return c.status === 'draft';
+    if (activeTab === 'Draft') return c.data?.is_draft === true;
     
     return true;
   });

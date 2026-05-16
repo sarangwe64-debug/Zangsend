@@ -20,10 +20,11 @@ jobs:
 
       - name: Deploy Functions
         run: |
-          supabase functions deploy find-email --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-          supabase functions deploy send-email --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-          supabase functions deploy create-draft --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-          supabase functions deploy process-queue --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-          supabase functions deploy telegram-bot --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
+          REF="${{ secrets.SUPABASE_PROJECT_ID }}"
+          supabase functions deploy find-email --project-ref "$REF"
+          supabase functions deploy send-email --project-ref "$REF"
+          supabase functions deploy create-draft --project-ref "$REF"
+          supabase functions deploy process-queue --project-ref "$REF" --no-verify-jwt
+          supabase functions deploy telegram-bot --project-ref "$REF" --no-verify-jwt
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
