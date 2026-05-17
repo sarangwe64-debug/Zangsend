@@ -144,7 +144,18 @@ export function distributeEmails(
       const key = dayKey(target);
       const count = counts.get(key) ?? 0;
       if (count < maxPerDayPerSender) break;
+      // Roll to next day — and crucially, treat that day-start as the new "last" so the
+      // NEXT call to nextSlotAfter adds a fresh random gap ON TOP of it.
       target = fitInWorkingWindow(rollToNextDayStart(target, startMin), now, startMin, endMin, true);
+      lastBySender[senderIndex] = target; // keep the rolled pointer up-to-date
+    }
+
+    // Safety: never schedule two contacts at the exact same millisecond.
+    // This can happen if two senders run out of daily capacity simultaneously.
+    const existing = results.find(r => r.scheduled_send_at === target.toISOString() && r.sender_id === sender.id);
+    if (existing) {
+      target = new Date(target.getTime() + MIN_GAP_MS);
+      target = fitInWorkingWindow(target, now, startMin, endMin, true);
     }
 
     const key = dayKey(target);

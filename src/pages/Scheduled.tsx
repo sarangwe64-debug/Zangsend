@@ -14,7 +14,7 @@ export function ScheduledPage() {
   const fetchScheduled = useCallback(async () => {
       try {
         const [contactsRes, templatesRes, listsRes] = await Promise.all([
-          supabase.from('contacts').select('*').eq('status', 'scheduled'),
+          supabase.from('contacts').select('*').eq('status', 'scheduled').order('scheduled_send_at', { ascending: true }),
           supabase.from('templates').select('id, name'),
           supabase.from('lists').select('id, name')
         ]);
@@ -140,17 +140,33 @@ export function ScheduledPage() {
 
   const handleUnschedule = async () => {
     if (selectedRows.length === 0) return;
-    if (!confirm(`Are you sure you want to unschedule ${selectedRows.length} contacts? They will move back to the Lists tab.`)) return;
+    if (!window.confirm(`Unschedule ${selectedRows.length} email(s)? They will move back to the Lists tab.`)) return;
     
     try {
-      await supabase.from('contacts').update({ 
-        status: 'pending',
-        scheduled_send_at: null
-      }).in('id', selectedRows);
+      // 1. Fetch the full data blobs for each row so we can surgically clear sender_id & is_draft
+      const { data: rows, error: fetchErr } = await supabase
+        .from('contacts')
+        .select('id, data')
+        .in('id', selectedRows);
+
+      if (fetchErr) throw fetchErr;
+
+      // 2. Update each row individually, clearing scheduling fields from the JSONB too
+      const updates = (rows || []).map(row => {
+        const cleaned = { ...(row.data || {}) };
+        delete cleaned.sender_id;
+        delete cleaned.is_draft;
+        return supabase.from('contacts').update({
+          status: 'pending',
+          scheduled_send_at: null,
+          data: cleaned,
+        }).eq('id', row.id);
+      });
+
+      await Promise.all(updates);
 
       setScheduled(prev => prev.filter(s => !selectedRows.includes(s.id)));
       setSelectedRows([]);
-      alert(`Moved ${selectedRows.length} contacts back to the Lists tab.`);
     } catch (err: any) {
       alert('Failed to unschedule: ' + err.message);
     }
