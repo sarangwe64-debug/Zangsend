@@ -44,18 +44,21 @@ let failed = 0;
 const errors = [];
 
 for (const email of dueEmails) {
-  if (email.data?.is_draft) continue;
-  const sender = senderMap.get(email.data?.sender_id);
-  if (!sender) {
-    failed++;
-    errors.push(`${email.email}: missing sender`);
-    continue;
-  }
-
-  const subject = applyTemplateVars(email.template?.subject || 'Hello', email);
-  const body = applyTemplateVars(email.template?.body || '', email);
-
   try {
+    if (email.data?.is_draft) {
+      // It's a draft but somehow got scheduled. Revert to pending to avoid infinite loop.
+      await supabase.from('contacts').update({ status: 'pending' }).eq('id', email.id);
+      continue;
+    }
+
+    const sender = senderMap.get(email.data?.sender_id);
+    if (!sender) {
+      throw new Error('Missing sender account for this email.');
+    }
+
+    const subject = applyTemplateVars(email.template?.subject || 'Hello', email);
+    const body = applyTemplateVars(email.template?.body || '', email);
+
     const mailOptions = {
       from: `"${sender.name || 'ZangSends'}" <${sender.email}>`,
       to: email.email,

@@ -27,8 +27,7 @@ export async function resolveMailAttachment(supabase, contact, template) {
     .download(row.storage_path);
 
   if (dlError || !blob) {
-    console.error('Attachment download failed:', dlError?.message);
-    return null;
+    throw new Error(`Attachment download failed: ${dlError?.message || 'File not found'}`);
   }
 
   const buffer = Buffer.from(await blob.arrayBuffer());
