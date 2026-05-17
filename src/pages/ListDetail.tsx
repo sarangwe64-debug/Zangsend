@@ -18,6 +18,7 @@ export function ListDetailPage() {
   const stopFindingRef = useRef(false); // cancellation flag
   const pendingAutofillRef = useRef<{ url: string; contactId?: string } | null>(null);
   const [processingEmails, setProcessingEmails] = useState<Set<string>>(new Set());
+  const [autofillingContacts, setAutofillingContacts] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState('All');
   const [uploading, setUploading] = useState(false);
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -651,6 +652,14 @@ export function ListDetailPage() {
       }
     } finally {
       setIsAutofilling(false);
+      const savedContactId = pendingAutofillRef.current?.contactId;
+      if (savedContactId) {
+        setAutofillingContacts(prev => {
+          const next = new Set(prev);
+          next.delete(savedContactId);
+          return next;
+        });
+      }
       pendingAutofillRef.current = null;
     }
   };
@@ -691,6 +700,9 @@ export function ListDetailPage() {
     // If there is a pending autofill for this URL, link the ID so it updates the DB when done!
     if (pendingAutofillRef.current && pendingAutofillRef.current.url === newContact.linkedin_url?.trim()) {
       pendingAutofillRef.current.contactId = savedId || undefined;
+      if (savedId) {
+        setAutofillingContacts(prev => new Set(prev).add(savedId));
+      }
     }
     
     setIsModalOpen(false);
@@ -966,26 +978,32 @@ export function ListDetailPage() {
                   {contact.scheduled_send_at ? new Date(contact.scheduled_send_at).toLocaleDateString() : '-'}
                 </td>
                 <td className="px-6 py-3 text-right">
-                  <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditContact(contact);
-                      }}
-                      className="text-xs text-primary hover:underline px-2 py-1 rounded hover:bg-primary/10 transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteContact(contact.id);
-                      }}
-                      className="text-xs text-red-400 hover:text-red-300 hover:underline px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  {autofillingContacts.has(contact.id) ? (
+                    <div className="flex items-center justify-end text-primary" title="Autofilling from LinkedIn...">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditContact(contact);
+                        }}
+                        className="text-xs text-primary hover:underline px-2 py-1 rounded hover:bg-primary/10 transition-colors"
+                      >
+                        Edit
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteContact(contact.id);
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 hover:underline px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
