@@ -9,7 +9,7 @@ export interface WorkingHours {
   end: string;
 }
 
-const MIN_GAP_MS = 10 * 60 * 1000;
+const MIN_GAP_MS = 11 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
 
 function parseMinutes(time: string): number {
@@ -109,18 +109,8 @@ function nextSlotAfter(
     return fitInWorkingWindow(new Date(now.getTime() + MIN_GAP_MS), now, startMin, endMin, true);
   }
 
-  const minNext = new Date(last.getTime() + MIN_GAP_MS);
-  let maxNext = new Date(last.getTime() + MAX_GAP_MS);
-
-  const { windowEnd } = windowBounds(last, startMin, endMin);
-  if (endMin > startMin && maxNext.getTime() > windowEnd.getTime()) {
-    maxNext = rollToNextDayStart(last, startMin);
-  }
-
-  let candidate = minNext;
-  if (candidate.getTime() > maxNext.getTime()) {
-    candidate = maxNext;
-  }
+  const randomGap = MIN_GAP_MS + Math.floor(Math.random() * (MAX_GAP_MS - MIN_GAP_MS));
+  const candidate = new Date(last.getTime() + randomGap);
 
   return fitInWorkingWindow(candidate, now, startMin, endMin, true);
 }
