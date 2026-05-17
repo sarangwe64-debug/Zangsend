@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar, Search, Filter, Clock, X, RotateCcw, Play, Loader2 } from 'lucide-react';
+import { Calendar, Search, Filter, Clock, X, RotateCcw, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 export function ScheduledPage() {

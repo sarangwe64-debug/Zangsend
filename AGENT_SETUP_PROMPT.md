@@ -92,22 +92,30 @@ ZangSend requires a background cron job to process scheduled emails. This is han
 
 ---
 
-## Phase 5: Netlify Deployment (Frontend Hosting)
+## Phase 5: Netlify Deployment (Automated)
 
-To deploy the React Vite frontend to the web:
-
-1. Go to [Netlify](https://app.netlify.com/) and click **Add new site** > **Import an existing project** > **GitHub**.
-2. Select the ZangSend repository.
-3. **Build settings:**
-   - Base directory: `/`
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. **Environment Variables:**
-   Click "Add environment variables" and enter:
-   - `VITE_SUPABASE_URL` = (Your Supabase URL)
-   - `VITE_SUPABASE_ANON_KEY` = (Your Supabase Anon Key)
-5. Click **Deploy Site**.
-6. Note: Because React uses client-side routing, ensure there is a `public/_redirects` file containing `/* /index.html 200` to prevent 404 errors on page refreshes.
+The frontend is deployed to Netlify via the CLI.
+1. **Ask the user for their Netlify Personal Access Token.** They can generate one here: [Netlify Personal Access Tokens](https://app.netlify.com/user/applications/personal).
+2. Once provided, run the following commands automatically to build and deploy their site:
+   ```bash
+   # Set the token for the CLI
+   export NETLIFY_AUTH_TOKEN="their_netlify_token"
+   
+   # Build the project
+   npm run build
+   
+   # Deploy a new site (if it hasn't been created yet)
+   npx netlify-cli deploy --build --prod --create --name zangsend-unique-name
+   
+   # If the site exists, just deploy:
+   npx netlify-cli deploy --build --prod
+   ```
+3. Make sure to set the `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as environment variables in the Netlify site settings using the CLI:
+   ```bash
+   npx netlify-cli env:set VITE_SUPABASE_URL your_url
+   npx netlify-cli env:set VITE_SUPABASE_ANON_KEY your_key
+   ```
+4. Note: Because React uses client-side routing, ensure there is a `public/_redirects` file containing `/* /index.html 200` to prevent 404 errors on page refreshes.
 
 ---
 
