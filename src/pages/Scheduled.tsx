@@ -62,20 +62,10 @@ export function ScheduledPage() {
   const handleProcessNow = async () => {
     setProcessing(true);
     try {
-      const { data, error } = await supabase.functions.invoke('process-queue', { body: {} });
-      if (error) throw error;
-      const msg = data?.msg || 'Queue run complete';
-      const detail = data
-        ? `Due: ${data.due ?? 0}, Sent: ${data.sent ?? 0}, Failed: ${data.failed ?? 0}`
-        : '';
-      if (data?.errors?.length) {
-        alert(`${msg}\n${detail}\n\nFirst error: ${data.errors[0]}`);
-      } else {
-        alert(`${msg}\n${detail}`);
-      }
       await fetchScheduled();
+      alert('The background worker automatically processes the queue every 5 minutes.\n\nQueue refreshed!');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Queue processing failed';
+      const message = err instanceof Error ? err.message : 'Queue refresh failed';
       alert(message);
     } finally {
       setProcessing(false);
@@ -200,8 +190,8 @@ export function ScheduledPage() {
           disabled={processing}
           className="btn btn-primary text-xs h-8 px-3"
         >
-          {processing ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Play className="w-3.5 h-3.5 mr-2" />}
-          Send due now
+          {processing ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5 mr-2" />}
+          Refresh Queue
         </button>
         <button className="btn btn-secondary text-xs h-8 px-3">
           <Filter className="w-3.5 h-3.5 mr-2" />

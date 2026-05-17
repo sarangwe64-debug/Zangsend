@@ -82,6 +82,7 @@ for (const email of dueEmails) {
     await supabase
       .from('contacts')
       .update({
+        status: 'failed',
         data: { ...email.data, last_error: msg, last_attempt_at: now },
       })
       .eq('id', email.id);
