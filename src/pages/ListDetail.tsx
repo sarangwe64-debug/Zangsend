@@ -16,7 +16,7 @@ export function ListDetailPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [findingEmails, setFindingEmails] = useState(false);
   const stopFindingRef = useRef(false); // cancellation flag
-  const pendingAutofillRef = useRef<{ url: string; contactId?: string } | null>(null);
+  const pendingAutofillRef = useRef<{ url: string; contactId?: string; savePromise?: Promise<void>; resolveSave?: () => void } | null>(null);
   const [processingEmails, setProcessingEmails] = useState<Set<string>>(new Set());
   const [autofillingContacts, setAutofillingContacts] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState('All');
@@ -602,7 +602,11 @@ export function ListDetailPage() {
       
       const currentPending = pendingAutofillRef.current;
       if (currentPending && currentPending.url === url && currentPending.contactId) {
-        // The user saved the contact while we were waiting!
+        // Wait for handleSaveNewContact to finish inserting the row first!
+        if (currentPending.savePromise) {
+          await currentPending.savePromise;
+        }
+        
         // We must update the database directly and silently.
         const patch = {
           first_name: data.first_name || null,
@@ -647,8 +651,17 @@ export function ListDetailPage() {
       }
     } catch (err: unknown) {
       console.error('Autofill error:', err);
-      if (!pendingAutofillRef.current?.contactId) {
-        alert(`Autofill failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const currentPending = pendingAutofillRef.current;
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      if (currentPending?.contactId) {
+        if (currentPending.savePromise) {
+          await currentPending.savePromise;
+        }
+        await supabase.from('contacts').update({ status: 'failed', data: { last_error: msg } }).eq('id', currentPending.contactId);
+        updateContactLocally(currentPending.contactId, { status: 'failed' });
+        alert(`Autofill failed for saved contact: ${msg}`);
+      } else {
+        alert(`Autofill failed: ${msg}`);
       }
     } finally {
       setIsAutofilling(false);
@@ -666,7 +679,25 @@ export function ListDetailPage() {
 
   const handleSaveNewContact = async () => {
     let savedId = editingContactId;
-    if (editingContactId) {
+    const isNew = !editingContactId;
+    
+    if (isNew) {
+      savedId = crypto.randomUUID();
+    }
+    
+    let resolveSave: (() => void) | undefined;
+    
+    // Synchronously link the ID so handleAutofill knows it IMMEDIATELY
+    if (pendingAutofillRef.current && pendingAutofillRef.current.url === newContact.linkedin_url?.trim()) {
+      pendingAutofillRef.current.contactId = savedId || undefined;
+      pendingAutofillRef.current.savePromise = new Promise(r => resolveSave = r);
+      pendingAutofillRef.current.resolveSave = resolveSave;
+      if (savedId) {
+        setAutofillingContacts(prev => new Set(prev).add(savedId));
+      }
+    }
+
+    if (!isNew) {
       // Update existing contact
       try {
         await supabase.from('contacts').update({
@@ -691,19 +722,15 @@ export function ListDetailPage() {
       }
     } else {
       // Insert new contact
-      const inserted = await insertContacts([{ ...newContact, status: 'pending' }]);
-      if (inserted && inserted.length > 0) {
-        savedId = inserted[0].id;
+      try {
+        await insertContacts([{ ...newContact, id: savedId, status: 'pending' }]);
+      } catch (err: any) {
+        alert('Failed to save contact: ' + err.message);
       }
     }
     
-    // If there is a pending autofill for this URL, link the ID so it updates the DB when done!
-    if (pendingAutofillRef.current && pendingAutofillRef.current.url === newContact.linkedin_url?.trim()) {
-      pendingAutofillRef.current.contactId = savedId || undefined;
-      if (savedId) {
-        setAutofillingContacts(prev => new Set(prev).add(savedId));
-      }
-    }
+    // Resolve the promise so handleAutofill can safely update the row in the DB!
+    if (resolveSave) resolveSave();
     
     setIsModalOpen(false);
     setEditingContactId(null);
