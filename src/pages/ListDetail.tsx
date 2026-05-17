@@ -16,6 +16,7 @@ export function ListDetailPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [findingEmails, setFindingEmails] = useState(false);
   const stopFindingRef = useRef(false); // cancellation flag
+  const pendingAutofillRef = useRef<{ url: string; contactId?: string } | null>(null);
   const [processingEmails, setProcessingEmails] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState('All');
   const [uploading, setUploading] = useState(false);
@@ -580,7 +581,8 @@ export function ListDetailPage() {
   };
 
   const handleAutofill = async () => {
-    if (!newContact.linkedin_url?.trim()) {
+    const url = newContact.linkedin_url?.trim();
+    if (!url) {
       alert('Paste a LinkedIn profile URL first.');
       return;
     }
@@ -589,34 +591,72 @@ export function ListDetailPage() {
       return;
     }
     setIsAutofilling(true);
+    pendingAutofillRef.current = { url };
+    
     try {
       const data = await invokeFindEmail({
-        url: newContact.linkedin_url.trim(),
+        url,
         mode: 'full',
       });
-      setNewContact((prev) => ({
-        ...prev,
-        first_name: data.first_name || prev.first_name,
-        last_name: data.last_name || prev.last_name,
-        company_name: data.company_name || prev.company_name,
-        title: data.title || prev.title,
-        email: data.email || prev.email,
-      }));
-      const filled = [data.first_name, data.last_name, data.email].filter(Boolean).length;
-      if (!data.email && filled === 0) {
-        alert('Apify could not find profile or email for this URL. Try another profile or check your Apify credits.');
-      } else if (!data.email) {
-        alert('Name and title filled via Apify. No email found for this profile.');
+      
+      const currentPending = pendingAutofillRef.current;
+      if (currentPending && currentPending.url === url && currentPending.contactId) {
+        // The user saved the contact while we were waiting!
+        // We must update the database directly and silently.
+        const patch = {
+          first_name: data.first_name || null,
+          last_name: data.last_name || null,
+          company_name: data.company_name || null,
+          title: data.title || null,
+          email: data.email || null,
+          status: data.email ? 'email_found' : 'pending',
+          data: {
+            first_name: data.first_name || null,
+            last_name: data.last_name || null,
+            company_name: data.company_name || null,
+            title: data.title || null,
+            email: data.email || null,
+          }
+        };
+        await supabase.from('contacts').update(patch).eq('id', currentPending.contactId);
+        updateContactLocally(currentPending.contactId, patch);
+        
+        const filled = [data.first_name, data.last_name, data.email].filter(Boolean).length;
+        if (!data.email && filled > 0) {
+          alert('Autofill complete: Name and title filled via Apify. No email found for this profile.');
+        } else if (data.email) {
+          // Optional: alert('Autofill complete: Email and details found!');
+        }
+      } else {
+        // Contact hasn't been saved yet, just update the modal state
+        setNewContact((prev) => ({
+          ...prev,
+          first_name: data.first_name || prev.first_name,
+          last_name: data.last_name || prev.last_name,
+          company_name: data.company_name || prev.company_name,
+          title: data.title || prev.title,
+          email: data.email || prev.email,
+        }));
+        const filled = [data.first_name, data.last_name, data.email].filter(Boolean).length;
+        if (!data.email && filled === 0) {
+          alert('Apify could not find profile or email for this URL. Try another profile or check your Apify credits.');
+        } else if (!data.email) {
+          alert('Name and title filled via Apify. No email found for this profile.');
+        }
       }
     } catch (err: unknown) {
       console.error('Autofill error:', err);
-      alert(`Autofill failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      if (!pendingAutofillRef.current?.contactId) {
+        alert(`Autofill failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
     } finally {
       setIsAutofilling(false);
+      pendingAutofillRef.current = null;
     }
   };
 
   const handleSaveNewContact = async () => {
+    let savedId = editingContactId;
     if (editingContactId) {
       // Update existing contact
       try {
@@ -642,7 +682,15 @@ export function ListDetailPage() {
       }
     } else {
       // Insert new contact
-      await insertContacts([{ ...newContact, status: 'pending' }]);
+      const inserted = await insertContacts([{ ...newContact, status: 'pending' }]);
+      if (inserted && inserted.length > 0) {
+        savedId = inserted[0].id;
+      }
+    }
+    
+    // If there is a pending autofill for this URL, link the ID so it updates the DB when done!
+    if (pendingAutofillRef.current && pendingAutofillRef.current.url === newContact.linkedin_url?.trim()) {
+      pendingAutofillRef.current.contactId = savedId || undefined;
     }
     
     setIsModalOpen(false);
